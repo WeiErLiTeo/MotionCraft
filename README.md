@@ -1,7 +1,7 @@
 # MotionCraft 📸 (Live Photos Studio)
 
 <p align="center">
-  <img src="app/src/main/res/mipmap-xxhdpi/ic_launcher.png" width="100" alt="MotionCraft Logo" />
+  <img src="Screenshot/logo.png" width="100" alt="MotionCraft Logo" />
 </p>
 
 <p align="center">
