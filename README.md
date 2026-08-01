@@ -45,6 +45,15 @@
 
 ---
 
+## 📱 应用界面截图 (App Screenshots)
+
+| 实况图集 (Gallery) | 视频转实况 (Convert) | 双选配对 (Pairing) | 系统设置 (Settings) |
+| :---: | :---: | :---: | :---: |
+| <img src="Screenshot/01_gallery.png" width="220" alt="实况图集" /> | <img src="Screenshot/02_convert.png" width="220" alt="视频转实况" /> | <img src="Screenshot/03_pairing.png" width="220" alt="双选配对" /> | <img src="Screenshot/04_settings.png" width="220" alt="系统设置" /> |
+| 支持全品牌实况识别与展示 | 视频序列帧截取与编码 | 静态图片与视频自由配对 | 主题调色盘与动态取色 |
+
+---
+
 ## 🔬 技术原理 (Technical Architecture)
 
 Android 与 iOS 中的实况照片 (Motion Photo / Live Photo) 本质上是将**高分辨率静态封面图 (JPEG)** 与**短视频流 (MP4)** 封存在同一个文件中的复合媒体格式。
@@ -83,6 +92,7 @@ MotionCraft/
 │       │   └── res/            # 图标、字符串 (strings.xml)、主题资源
 │       └── test/               # 单元测试与 Robolectric 测试
 ├── .github/                    # Issue 模板与 CI 配置
+├── Screenshot/                 # 手机真实效果截图资源目录
 ├── CONTRIBUTING.md             # 开源贡献指南
 ├── CHANGELOG.md                # 版本更新日志
 ├── SECURITY.md                 # 安全政策

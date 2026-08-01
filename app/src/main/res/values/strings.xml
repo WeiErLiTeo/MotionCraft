@@ -50,6 +50,13 @@
     <string name="xmp_diagnostic_desc">用于诊断各大厂商实况照片元数据格式，及解决编码不兼容问题</string>
     <string name="btn_open_xmp_tool">打开 XMP 分析与诊断工具</string>
     <string name="about_platform_support">关于与平台支持</string>
+    <string name="about_developer_community">开发者与开源社区</string>
+    <string name="about_developer_community_desc">项目源码已在 GitHub 开源，欢迎 Star / Fork 与提交 Issue</string>
+    <string name="btn_developer_homepage">开发者个人主页</string>
+    <string name="btn_github_repo">GitHub 开源仓库</string>
+    <string name="btn_report_issue">提交 Issue / 反馈</string>
+    <string name="open_source_license">Apache-2.0 开源协议</string>
+    <string name="version_format">MotionCraft v1.0.0 (Motion Photo Engine)</string>
     <string name="language_settings">语言设置 / Language</string>
     <string name="auto_play_setting">自动播放实况</string>
     <string name="auto_play_desc">打开实况时自动播放一次</string>

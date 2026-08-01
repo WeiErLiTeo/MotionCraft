@@ -50,6 +50,13 @@
     <string name="xmp_diagnostic_desc">Diagnose metadata &amp; fix encoding issues</string>
     <string name="btn_open_xmp_tool">Open XMP Tool</string>
     <string name="about_platform_support">About &amp; Support</string>
+    <string name="about_developer_community">Developer &amp; Open Source</string>
+    <string name="about_developer_community_desc">Source code is available on GitHub. Star/Fork &amp; Feedback are welcome!</string>
+    <string name="btn_developer_homepage">Developer Homepage</string>
+    <string name="btn_github_repo">GitHub Repository</string>
+    <string name="btn_report_issue">Report Issue / Feedback</string>
+    <string name="open_source_license">Apache-2.0 License</string>
+    <string name="version_format">MotionCraft v1.0.0 (Motion Photo Engine)</string>
     <string name="language_settings">Language</string>
     <string name="auto_play_setting">Auto-play Live Photos</string>
     <string name="auto_play_desc">Play once automatically when opened</string>
