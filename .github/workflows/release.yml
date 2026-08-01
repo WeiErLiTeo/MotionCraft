@@ -41,13 +41,19 @@ jobs:
           fi
 
       - name: Build Android APK
-        run: gradle assembleDebug --stacktrace
+        run: gradle assembleRelease --stacktrace || gradle assembleDebug --stacktrace
 
       - name: Organize APK Files
         run: |
           mkdir -p build_output
           TAG="${{ github.event.inputs.tag_name || github.ref_name }}"
-          find app/build/outputs/apk/ -name "*.apk" -exec cp {} build_output/MotionCraft-${TAG}.apk \;
+          find app/build/outputs/apk/ -name "*.apk" | while read -r apk_file; do
+            base_name=$(basename "$apk_file")
+            clean_name=$(echo "$base_name" | sed "s/^app-/MotionCraft-${TAG}-/")
+            cp "$apk_file" "build_output/$clean_name"
+          done
+          echo "Organized APK files:"
+          ls -lh build_output/
 
       - name: Determine Tag Name
         id: tag
