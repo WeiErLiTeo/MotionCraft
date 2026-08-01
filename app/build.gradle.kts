@@ -25,26 +25,33 @@ android {
   }
 
   signingConfigs {
+    val debugKeystoreFile = file("${rootDir}/debug.keystore")
+    val base64File = file("${rootDir}/debug.keystore.base64")
+    if (!debugKeystoreFile.exists() && base64File.exists()) {
+      try {
+        val decoded = Base64.getDecoder().decode(base64File.readText().trim())
+        debugKeystoreFile.writeBytes(decoded)
+      } catch (_: Exception) {}
+    }
+
     create("release") {
       val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
-      storeFile = file(keystorePath)
-      storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
-      keyPassword = System.getenv("KEY_PASSWORD")
-    }
-    create("debugConfig") {
-      val keystoreFile = file("${rootDir}/debug.keystore")
-      val base64File = file("${rootDir}/debug.keystore.base64")
-      if (!keystoreFile.exists() && base64File.exists()) {
-        try {
-          val decoded = Base64.getDecoder().decode(base64File.readText().trim())
-          keystoreFile.writeBytes(decoded)
-        } catch (_: Exception) {}
+      val releaseFile = file(keystorePath)
+      if (releaseFile.exists()) {
+        storeFile = releaseFile
+        storePassword = System.getenv("STORE_PASSWORD")
+        keyAlias = "upload"
+        keyPassword = System.getenv("KEY_PASSWORD")
       }
-      storeFile = keystoreFile
-      storePassword = "android"
-      keyAlias = "androiddebugkey"
-      keyPassword = "android"
+    }
+
+    create("debugConfig") {
+      if (debugKeystoreFile.exists()) {
+        storeFile = debugKeystoreFile
+        storePassword = "android"
+        keyAlias = "androiddebugkey"
+        keyPassword = "android"
+      }
     }
   }
 
@@ -53,10 +60,17 @@ android {
       isCrunchPngs = false
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      signingConfig = signingConfigs.getByName("release")
+      val releaseConfig = signingConfigs.findByName("release")
+      if (releaseConfig?.storeFile?.exists() == true) {
+        signingConfig = releaseConfig
+      } else {
+        signingConfig = signingConfigs.findByName("debugConfig")?.takeIf { it.storeFile?.exists() == true }
+          ?: signingConfigs.getByName("debug")
+      }
     }
     debug {
-      signingConfig = signingConfigs.getByName("debugConfig")
+      signingConfig = signingConfigs.findByName("debugConfig")?.takeIf { it.storeFile?.exists() == true }
+        ?: signingConfigs.getByName("debug")
     }
   }
   compileOptions {
