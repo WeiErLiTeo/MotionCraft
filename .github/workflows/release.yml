@@ -29,7 +29,7 @@ jobs:
           java-version: '17'
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Make Gradlew Executable
         run: chmod +x gradlew || true
@@ -72,6 +72,14 @@ jobs:
           files: build_output/*.apk
           tag_name: ${{ steps.tag.outputs.tag_name }}
           name: Release ${{ steps.tag.outputs.tag_name }}
+          body: |
+            MotionCraft Android Release
+
+            更新内容：
+            - 实况照片识别、查看与列表管理
+            - 视频与实况照片互转
+            - 图片与视频配对合成 Live Photo
+            - XMP 元数据查看
           draft: false
           prerelease: false
         env:
