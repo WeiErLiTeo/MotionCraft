@@ -9,9 +9,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AppDatabase
 import com.example.data.LivePhotoRecord
-import com.example.data.WebDavConfig
 import com.example.util.MotionPhotoHelper
-import com.example.util.WebDavClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -28,7 +26,6 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
     private val TAG = "LivePhotoViewModel"
     private val db = AppDatabase.getDatabase(application)
     private val livePhotoDao = db.livePhotoDao()
-    private val webDavDao = db.webDavDao()
     private val sharedPrefs = application.getSharedPreferences("theme_prefs", Context.MODE_PRIVATE)
 
     // Theme States
@@ -81,30 +78,6 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
             initialValue = emptyList()
         )
 
-    // 2. WebDAV Configuration Flow
-    val webDavConfig: StateFlow<WebDavConfig?> = webDavDao.getConfigFlow()
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            initialValue = null
-        )
-
-    // WebDAV UI States
-    private val _isWebDavTesting = MutableStateFlow(false)
-    val isWebDavTesting = _isWebDavTesting.asStateFlow()
-
-    private val _webDavTestResult = MutableStateFlow<String?>(null)
-    val webDavTestResult = _webDavTestResult.asStateFlow()
-
-    private val _isUploadingApk = MutableStateFlow(false)
-    val isUploadingApk = _isUploadingApk.asStateFlow()
-
-    private val _apkUploadProgress = MutableStateFlow(0f)
-    val apkUploadProgress = _apkUploadProgress.asStateFlow()
-
-    private val _apkUploadResult = MutableStateFlow<String?>(null)
-    val apkUploadResult = _apkUploadResult.asStateFlow()
-
     // Video to Live UI States
     private val _selectedVideoUri = MutableStateFlow<Uri?>(null)
     val selectedVideoUri = _selectedVideoUri.asStateFlow()
@@ -132,101 +105,6 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val _generationResult = MutableStateFlow<String?>(null)
     val generationResult = _generationResult.asStateFlow()
-
-    init {
-        // Initialize Default Pre-Populated WebDAV settings as requested
-        viewModelScope.launch {
-            val existing = withContext(Dispatchers.IO) { webDavDao.getConfig() }
-            if (existing == null) {
-                val defaultConfig = WebDavConfig(
-                    id = 1,
-                    serverUrl = "https://weierlitere.otzo.com/",
-                    username = "WeiErLiTeRe",
-                    password = "baihuaiqi520",
-                    isConnected = false
-                )
-                withContext(Dispatchers.IO) {
-                    webDavDao.insertConfig(defaultConfig)
-                }
-                Log.d(TAG, "Pre-populated WebDAV credentials successfully")
-            }
-        }
-    }
-
-    // Save configuration
-    fun saveWebDavConfig(url: String, user: String, pass: String) {
-        viewModelScope.launch {
-            val config = WebDavConfig(
-                id = 1,
-                serverUrl = url,
-                username = user,
-                password = pass,
-                isConnected = false
-            )
-            withContext(Dispatchers.IO) {
-                webDavDao.insertConfig(config)
-            }
-            _webDavTestResult.value = null
-            _apkUploadResult.value = null
-        }
-    }
-
-    // Test WebDAV connection
-    fun testWebDavConnection() {
-        val config = webDavConfig.value ?: return
-        _isWebDavTesting.value = true
-        _webDavTestResult.value = null
-
-        viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                WebDavClient.testConnection(config.serverUrl, config.username, config.password)
-            }
-            _isWebDavTesting.value = false
-            result.onSuccess {
-                _webDavTestResult.value = "连接成功"
-                // Save isConnected status
-                withContext(Dispatchers.IO) {
-                    webDavDao.insertConfig(config.copy(isConnected = true, lastSyncTime = System.currentTimeMillis()))
-                }
-            }.onFailure { error ->
-                _webDavTestResult.value = "连接失败: ${error.localizedMessage ?: "未知错误"}"
-                withContext(Dispatchers.IO) {
-                    webDavDao.insertConfig(config.copy(isConnected = false))
-                }
-            }
-        }
-    }
-
-    // Extract own APK and upload to WebDAV
-    fun uploadOwnApk(context: Context) {
-        val config = webDavConfig.value ?: return
-        _isUploadingApk.value = true
-        _apkUploadProgress.value = 0f
-        _apkUploadResult.value = null
-
-        viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                WebDavClient.uploadApk(
-                    context = context,
-                    serverUrl = config.serverUrl,
-                    user = config.username,
-                    pass = config.password,
-                    onProgress = { progress ->
-                        _apkUploadProgress.value = progress
-                    }
-                )
-            }
-            _isUploadingApk.value = false
-            result.onSuccess { uploadUrl ->
-                _apkUploadResult.value = "成功上传到: $uploadUrl"
-                withContext(Dispatchers.IO) {
-                    webDavDao.insertConfig(config.copy(lastSyncTime = System.currentTimeMillis()))
-                }
-            }.onFailure { error ->
-                _apkUploadResult.value = "上传失败: ${error.localizedMessage ?: "未知错误"}"
-            }
-        }
-    }
 
     private fun clearVideoFrames() {
         val old = _videoFrames.value

@@ -1,6 +1,6 @@
 {
   "name": "Remix: 实况照片",
-  "description": "一款支持播放苹果和安卓各大厂商实况照片、视频转实况、系统与谷歌相册选图以及WebDAV APK备份的应用程序。",
+  "description": "一款支持播放苹果和安卓各大厂商实况照片、视频转实况、系统与谷歌相册选图以及图片视频合成的应用程序。",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

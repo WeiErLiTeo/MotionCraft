@@ -22,16 +22,6 @@ data class LivePhotoRecord(
     val isEmbedded: Boolean = false
 )
 
-@Entity(tableName = "webdav_config")
-data class WebDavConfig(
-    @PrimaryKey val id: Int = 1,
-    val serverUrl: String,
-    val username: String,
-    val password: String,
-    val isConnected: Boolean = false,
-    val lastSyncTime: Long = 0L
-)
-
 @Dao
 interface LivePhotoDao {
     @Query("SELECT * FROM live_photos ORDER BY timestamp DESC")
@@ -44,22 +34,9 @@ interface LivePhotoDao {
     suspend fun deleteLivePhotoById(id: Int)
 }
 
-@Dao
-interface WebDavDao {
-    @Query("SELECT * FROM webdav_config WHERE id = 1 LIMIT 1")
-    suspend fun getConfig(): WebDavConfig?
-
-    @Query("SELECT * FROM webdav_config WHERE id = 1 LIMIT 1")
-    fun getConfigFlow(): Flow<WebDavConfig?>
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertConfig(config: WebDavConfig)
-}
-
-@Database(entities = [LivePhotoRecord::class, WebDavConfig::class], version = 1, exportSchema = false)
+@Database(entities = [LivePhotoRecord::class], version = 1, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun livePhotoDao(): LivePhotoDao
-    abstract fun webDavDao(): WebDavDao
 
     companion object {
         @Volatile
