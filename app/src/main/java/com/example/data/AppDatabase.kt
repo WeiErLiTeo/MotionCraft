@@ -3,6 +3,7 @@ package com.example.data
 import android.content.Context
 import androidx.room.Dao
 import androidx.room.Database
+import androidx.room.Delete
 import androidx.room.Entity
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
@@ -32,6 +33,9 @@ interface LivePhotoDao {
 
     @Query("DELETE FROM live_photos WHERE id = :id")
     suspend fun deleteLivePhotoById(id: Int)
+
+    @Delete
+    suspend fun deleteLivePhotos(records: List<LivePhotoRecord>)
 }
 
 @Database(entities = [LivePhotoRecord::class], version = 1, exportSchema = false)

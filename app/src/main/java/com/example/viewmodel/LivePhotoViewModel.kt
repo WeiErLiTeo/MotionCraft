@@ -198,6 +198,24 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    // Batch Delete Records
+    fun deleteLivePhotos(records: List<LivePhotoRecord>) {
+        if (records.isEmpty()) return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                records.forEach { record ->
+                    try {
+                        File(record.coverPath).delete()
+                        File(record.videoPath).delete()
+                    } catch (e: Exception) {
+                        // Ignore file deletion errors to ensure DB delete continues
+                    }
+                }
+                livePhotoDao.deleteLivePhotos(records)
+            }
+        }
+    }
+
     fun setCustomCover(uri: Uri) {
         _customCoverUri.value = uri
     }

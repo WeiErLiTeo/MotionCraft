@@ -434,7 +434,7 @@ fun LibraryScreen(viewModel: LivePhotoViewModel, innerPadding: PaddingValues = P
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                     onClick = {
                         val recordsToDelete = livePhotos.filter { selectedRecords.contains(it.id) }
-                        recordsToDelete.forEach { viewModel.deleteLivePhoto(it) }
+                        viewModel.deleteLivePhotos(recordsToDelete)
                         selectedRecords = emptySet()
                         isSelectionMode = false
                         showBatchDeleteConfirm = false
