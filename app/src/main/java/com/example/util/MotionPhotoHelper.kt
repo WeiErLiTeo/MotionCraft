@@ -198,6 +198,39 @@ object MotionPhotoHelper {
     }
 
     /**
+     * Extracts multiple frames from video at the specified timestamps in milliseconds
+     * using a single MediaMetadataRetriever instance for optimal performance.
+     */
+    fun extractVideoFrames(context: Context, videoUri: Uri, timestampsMs: List<Long>): List<Bitmap> {
+        if (timestampsMs.isEmpty()) return emptyList()
+        val retriever = MediaMetadataRetriever()
+        val frames = mutableListOf<Bitmap>()
+        try {
+            retriever.setDataSource(context, videoUri)
+            for (timeMs in timestampsMs) {
+                try {
+                    val timeUs = timeMs * 1000
+                    val bitmap = retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                    if (bitmap != null) {
+                        frames.add(bitmap)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error extracting frame at $timeMs ms", e)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error extracting video frames batch", e)
+        } finally {
+            try {
+                retriever.release()
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
+        return frames
+    }
+
+    /**
      * Gets the duration of a video in milliseconds
      */
     fun getVideoDuration(context: Context, videoUri: Uri): Long {

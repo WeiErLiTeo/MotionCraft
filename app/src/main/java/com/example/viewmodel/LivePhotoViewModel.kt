@@ -170,17 +170,11 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             val duration = _videoDuration.value
             if (duration <= 0) return@launch
-            val frames = mutableListOf<Bitmap>()
             val steps = 5
             val stepSize = duration / steps
-            withContext(Dispatchers.IO) {
-                for (i in 0 until steps) {
-                    val timeMs = i * stepSize
-                    val bitmap = MotionPhotoHelper.extractVideoFrame(context, uri, timeMs)
-                    if (bitmap != null) {
-                        frames.add(bitmap)
-                    }
-                }
+            val timestampsMs = List(steps) { i -> i * stepSize }
+            val frames = withContext(Dispatchers.IO) {
+                MotionPhotoHelper.extractVideoFrames(context, uri, timestampsMs)
             }
             _videoFrames.value = frames
         }
