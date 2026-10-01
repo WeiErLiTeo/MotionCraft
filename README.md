@@ -1,4 +1,4 @@
-# MotionCraft 📸 (Live Photos Studio)
+# MotionCraft (Live Photos Studio)
 
 <p align="center">
   <img src="Screenshot/logo.svg" width="100" alt="MotionCraft Logo" />
@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="README_zh.md"><b>🇨🇳 中文说明文档 (Chinese Version)</b></a>
+  <a href="README_zh.md"><b>简体中文说明文档 (Chinese Version)</b></a>
 </p>
 
 <p align="center">
@@ -22,23 +22,23 @@
 
 ---
 
-## 📖 Introduction
+## Introduction
 
 **MotionCraft** is an Android utility designed for viewing, converting, synthesizing, and managing Motion Photos and Live Photos.
 It provides local motion photo scanning and playback, cover/video extraction, video-to-live-photo conversion, and manual image-video pairing.
 
 ---
 
-## 📊 Platform & Format Support
+## Platform & Format Support
 
 | Platform / Format | Status |
 | :--- | :---: |
-| **Google Motion Photo** | ✅ Supported |
-| **Xiaomi Live Photo** | ✅ Supported |
-| **OPPO / OnePlus Live Photo** | ✅ Supported |
-| **TikTok / Douyin Live Photo Share** | ✅ Supported |
-| **Apple Live Photo** | 🚧 In Development |
-| **vivo / iQOO Live Photo** | 🚧 In Development |
+| **Google Motion Photo** | Supported |
+| **Xiaomi Live Photo** | Supported |
+| **OPPO / OnePlus Live Photo** | Supported |
+| **TikTok / Douyin Live Photo Share** | Supported |
+| **Apple Live Photo** | In Development |
+| **vivo / iQOO Live Photo** | In Development |
 
 > Different manufacturers implement Live Photos differently. Even though they share the "static image + dynamic video" structure, differences exist in XMP/EXIF tags, MP4 embedding layout, and private metadata.
 >
@@ -46,24 +46,24 @@ It provides local motion photo scanning and playback, cover/video extraction, vi
 
 ---
 
-## 🌟 Key Features
+## Key Features
 
-- 📸 **Live Photo Gallery**
+- **Live Photo Gallery**
   - Automatically scans local albums for Motion Photos containing embedded micro-video (`MicroVideoOffset`).
   - Smooth grid view with multi-select and batch delete support.
-- 🎬 **Motion Photo Playback**
+- **Motion Photo Playback**
   - Long-press any card to play embedded micro-videos with full-screen gesture controls.
-- 🔄 **Video & Live Photo Converter**
+- **Video & Live Photo Converter**
   - Convert standard videos into Android Motion Photos (JPEG + MP4).
   - Extract standalone MP4 videos and JPEG covers from Live Photos.
-- 🔗 **Image & Video Pairing**
+- **Image & Video Pairing**
   - Pick any standalone image and short video clip, write XMP metadata, and combine them into a Live Photo.
-- 🛠️ **XMP Metadata Inspector**
+- **XMP Metadata Inspector**
   - Inspect parameters like `GCamera:MicroVideo` and `MicroVideoOffset`.
 
 ---
 
-## 📱 App Screenshots
+## App Screenshots
 
 | Gallery | Video to Live | Dual Pairing | Settings |
 | :---: | :---: | :---: | :---: |
@@ -72,7 +72,7 @@ It provides local motion photo scanning and playback, cover/video extraction, vi
 
 ---
 
-## 🔬 How It Works
+## How It Works
 
 Android Motion Photo format stores the JPEG cover image and MP4 video data inside a single file:
 
@@ -92,7 +92,7 @@ Android Motion Photo format stores the JPEG cover image and MP4 video data insid
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 
 ```
 MotionCraft/
@@ -112,13 +112,13 @@ MotionCraft/
 ├── CHANGELOG.md                # Release notes & changelog
 ├── SECURITY.md                 # Security policy
 ├── LICENSE                     # Apache 2.0 License
-├── README_zh.md                # Chinese documentation
-└── README.md                   # Project documentation
+├── README_zh.md                # Simplified Chinese documentation
+└── README.md                   # English documentation
 ```
 
 ---
 
-## 🚀 Build Instructions
+## Build Instructions
 
 Build Release APK using Gradle:
 
@@ -130,7 +130,7 @@ Output directory: `app/build/outputs/apk/release/`
 
 ---
 
-## ⚙️ Requirements & Permissions
+## Requirements & Permissions
 
 ### Requirements
 - **OS Version**: Android 8.0 (API Level 26) or higher
@@ -143,6 +143,6 @@ Output directory: `app/build/outputs/apk/release/`
 
 ---
 
-## 📄 License
+## License
 
 This project is licensed under the [Apache 2.0 License](LICENSE).

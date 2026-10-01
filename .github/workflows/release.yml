@@ -93,14 +93,14 @@ jobs:
             ### MotionCraft Android Release
 
             #### What's New & Highlights
-            - 📸 **Live Photo Gallery**: Automatically scan and view all motion photos stored on your device with smooth grid loading.
-            - 🎬 **Press to Play**: Long-press any photo card to instantly play the motion clip with gesture controls and full-screen playback.
-            - 🔄 **Video to Motion Photo**: Easily convert regular video clips into motion photos (JPEG + MP4) with customizable cover frames.
-            - 🔗 **Pair Photos & Videos**: Select any standalone picture and short video to combine them into standard Live Photo format.
-            - 📦 **Extract Video & Frames**: Export embedded MP4 video or pick individual high-resolution photo frames.
-            - 🔍 **XMP Metadata Inspector**: View detailed technical metadata like `MicroVideoOffset` and Google Motion Photo flags.
-            - 🎨 **Theme & Appearance**: Full Material You dynamic color theming with light and dark mode support.
-            - ⚡ **64-bit Architecture**: Optimized 64-bit build (`arm64-v8a` / `x86_64`) with minimal APK size.
+            - **Live Photo Gallery**: Automatically scan and view all motion photos stored on your device with smooth grid loading.
+            - **Press to Play**: Long-press any photo card to instantly play the motion clip with gesture controls and full-screen playback.
+            - **Video to Motion Photo**: Easily convert regular video clips into motion photos (JPEG + MP4) with customizable cover frames.
+            - **Pair Photos & Videos**: Select any standalone picture and short video to combine them into standard Live Photo format.
+            - **Extract Video & Frames**: Export embedded MP4 video or pick individual high-resolution photo frames.
+            - **XMP Metadata Inspector**: View detailed technical metadata like `MicroVideoOffset` and Google Motion Photo flags.
+            - **Theme & Appearance**: Full Material You dynamic color theming with light and dark mode support.
+            - **64-bit Architecture**: Optimized 64-bit build (`arm64-v8a` / `x86_64`) with minimal APK size.
 
             #### Verification
             Download the release APK and verify with the included `checksums-sha256.txt` SHA-256 hash.
