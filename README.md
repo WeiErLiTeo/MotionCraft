@@ -24,42 +24,45 @@
 
 ## Introduction
 
-**MotionCraft** is an Android utility designed for viewing, converting, synthesizing, and managing Motion Photos and Live Photos.
-It provides local motion photo scanning and playback, cover/video extraction, video-to-live-photo conversion, and manual image-video pairing.
+**MotionCraft** is a specialized Android utility designed for viewing, converting, synthesizing, and managing Motion Photos and Live Photos.
+It provides automatic album scanning and press-to-play playback, micro-video extraction, high-resolution single frame capture, video-to-live-photo conversion, image & video pairing, and deep XMP metadata inspection.
 
 ---
 
 ## Platform & Format Support
 
-| Platform / Format | Status |
-| :--- | :---: |
-| **Google Motion Photo** | Supported |
-| **Xiaomi Live Photo** | Supported |
-| **OPPO / OnePlus Live Photo** | Supported |
-| **TikTok / Douyin Live Photo Share** | Supported |
-| **Apple Live Photo** | In Development |
-| **vivo / iQOO Live Photo** | In Development |
-
-> Different manufacturers implement Live Photos differently. Even though they share the "static image + dynamic video" structure, differences exist in XMP/EXIF tags, MP4 embedding layout, and private metadata.
->
-> Platform status reflects actual compatibility implemented in MotionCraft.
+| Platform / Format | Status | Notes |
+| :--- | :---: | :--- |
+| **Google Motion Photo** | Supported | Standard XMP `GCamera:MicroVideo` and `MicroVideoOffset` encapsulation |
+| **Xiaomi Live Photo** | Supported | Xiaomi Gallery Live Photo scanning, cover/video extraction & synthesis |
+| **OPPO / OnePlus Live Photo** | Supported | ColorOS Live Photo packaging structure recognition and conversion |
+| **TikTok / Douyin Live Photo Share** | Supported | Playback and decoding of dynamic live photo shares from Douyin |
+| **Apple Live Photo** | In Development | iOS HEIC/JPEG + MOV pairing compatibility |
+| **vivo / iQOO Live Photo** | In Development | OriginOS Live Photo format support in progress |
 
 ---
 
 ## Key Features
 
-- **Live Photo Gallery**
-  - Automatically scans local albums for Motion Photos containing embedded micro-video (`MicroVideoOffset`).
-  - Smooth grid view with multi-select and batch delete support.
-- **Motion Photo Playback**
-  - Long-press any card to play embedded micro-videos with full-screen gesture controls.
-- **Video & Live Photo Converter**
-  - Convert standard videos into Android Motion Photos (JPEG + MP4).
-  - Extract standalone MP4 videos and JPEG covers from Live Photos.
-- **Image & Video Pairing**
-  - Pick any standalone image and short video clip, write XMP metadata, and combine them into a Live Photo.
-- **XMP Metadata Inspector**
-  - Inspect parameters like `GCamera:MicroVideo` and `MicroVideoOffset`.
+- **Smart Live Photo Gallery**
+  - Scans local albums for Motion Photos containing embedded micro-videos (`MicroVideoOffset`).
+  - Smooth grid view with multi-select and batch deletion.
+- **Press to Play & Full-Screen Playback**
+  - Long-press any photo card to smoothly play embedded micro-videos with full-screen gesture controls.
+- **Video to Motion Photo**
+  - Select video cover frames with live preview, inject XMP metadata, and convert to standard Android Motion Photos.
+- **Photo & Video Pairing**
+  - Pair any standalone static photo and short video clip into a brand-compliant Live Photo.
+- **Extract Video & Frame Capture**
+  - Losslessly extract embedded MP4 video and JPEG covers from Live Photos.
+  - Interactive sine wave slider to scrub and extract high-resolution individual still frames.
+- **XMP Metadata Diagnostics**
+  - Inspect byte offsets, namespace definitions, and embedded video flags.
+- **Multilingual & Theming**
+  - Instant in-app language switching across Simplified Chinese, Traditional Chinese, English, and Japanese.
+  - Full Material Design 3 dynamic color theming (Monet), dark mode, and customizable accent palettes.
+- **Developer Diagnostics Console**
+  - Built-in runtime interaction logging with floating debug window and log sharing support.
 
 ---
 
@@ -74,7 +77,7 @@ It provides local motion photo scanning and playback, cover/video extraction, vi
 
 ## How It Works
 
-Android Motion Photo format stores the JPEG cover image and MP4 video data inside a single file:
+Android Motion Photo format stores the JPEG cover image and MP4 video stream inside a single file:
 
 ```
 +--------------------------------+----------------------------+
@@ -88,32 +91,89 @@ Android Motion Photo format stores the JPEG cover image and MP4 video data insid
 
 1. **XMP Offset Parsing**: Reads JPEG header (`0xFFE1` APP1 Marker) and parses `GCamera:MicroVideoOffset` to locate the starting byte of the trailing MP4 stream.
 2. **Video Extraction**: Uses `RandomAccessFile` to seek and read the trailing MP4 data by byte offset.
-3. **Playback Control**: Integrates Media3 ExoPlayer with Jetpack Compose views for gesture-triggered playback.
+3. **Playback Control**: Integrates AndroidX Media3 (ExoPlayer) with Jetpack Compose views for seamless gesture-triggered playback.
 
 ---
 
 ## Project Structure
 
-```
+```text
 MotionCraft/
-├── app/                        # Main Android application module
+├── app/                                    # Main Android application module
+│   ├── build.gradle.kts                    # Module build configuration (64-bit ABI filter, R8 minify)
+│   ├── proguard-rules.pro                  # R8 / ProGuard optimization rules
 │   └── src/
 │       ├── main/
+│       │   ├── AndroidManifest.xml         # Manifest and permissions
 │       │   ├── java/com/example/
-│       │   │   ├── core/       # Conversion engine, media processing & protocols
-│       │   │   ├── data/       # Room Database, entities & persistence
-│       │   │   ├── ui/         # Jetpack Compose UI (Screens & Components)
-│       │   │   └── util/       # Logging & motion photo helpers
-│       │   └── res/            # Drawables, strings & theme resources
-│       └── test/               # Unit and Robolectric tests
-├── .github/                    # CI/CD workflows & issue templates
-├── Screenshot/                 # App preview screenshots
-├── CONTRIBUTING.md             # Contribution guidelines
-├── CHANGELOG.md                # Release notes & changelog
-├── SECURITY.md                 # Security policy
-├── LICENSE                     # Apache 2.0 License
-├── README_zh.md                # Simplified Chinese documentation
-└── README.md                   # English documentation
+│       │   │   ├── MainActivity.kt         # Main Activity with edge-to-edge layout
+│       │   │   ├── core/                   # Media engine & format protocols
+│       │   │   │   ├── converter/
+│       │   │   │   │   └── LivePhotoToolConverter.kt # Conversion business logic
+│       │   │   │   ├── media/
+│       │   │   │   │   ├── ImageProcessor.kt         # Frame & image processing
+│       │   │   │   │   ├── VideoProcessor.kt         # Video transcoding & trim
+│       │   │   │   │   └── VideoThumbnailCache.kt    # Frame cache & thumbnails
+│       │   │   │   └── protocol/
+│       │   │   │       ├── LivePhotoBrandMode.kt     # Manufacturer modes (Google/Xiaomi/OPPO etc.)
+│       │   │   │       └── LivePhotoProtocolPacker.kt# XMP injection & packaging
+│       │   │   ├── data/
+│       │   │   │   └── AppDatabase.kt      # Room Database persistence
+│       │   │   ├── ui/                     # Jetpack Compose UI
+│       │   │   │   ├── LivePhotoApp.kt     # App scaffold & navigation rail
+│       │   │   │   ├── components/         # Modular UI components
+│       │   │   │   │   ├── DebugLogSheet.kt          # Debug console bottom sheet
+│       │   │   │   │   ├── LivePhotoCard.kt          # Gallery photo card
+│       │   │   │   │   ├── LivePhotoPlaybackOverlay.kt# Press-to-play overlay
+│       │   │   │   │   ├── SquigglyWavySlider.kt     # Sine wave scrubbing slider
+│       │   │   │   │   ├── VideoPlayerComponents.kt  # Media3 player wrappers
+│       │   │   │   │   └── VideoTrimSlider.kt        # Video trimming component
+│       │   │   │   ├── screens/            # Application screens
+│       │   │   │   │   ├── ConvertScreen.kt          # Video to Live Photo
+│       │   │   │   │   ├── LibraryScreen.kt          # Motion Photo Gallery
+│       │   │   │   │   ├── LivePhotoDetailScreen.kt  # Detail & frame capture
+│       │   │   │   │   ├── ManualPairScreen.kt       # Dual pair merger
+│       │   │   │   │   ├── SettingsScreen.kt         # Preferences & theming
+│       │   │   │   │   └── XmpToolScreen.kt          # XMP metadata tool
+│       │   │   │   └── theme/              # Material 3 Design System
+│       │   │   │       ├── Color.kt                  # Color palette definitions
+│       │   │   │       ├── Theme.kt                  # Dynamic color & themes
+│       │   │   │       └── Type.kt                   # Typography styles
+│       │   │   ├── util/                   # Utility helpers
+│       │   │   │   ├── DebugLogManager.kt  # Interaction & runtime logger
+│       │   │   │   └── MotionPhotoHelper.kt# XMP parsing & file detection
+│       │   │   └── viewmodel/              # State management
+│       │   │       └── LivePhotoViewModel.kt # Global UI State ViewModel
+│       │   └── res/                        # Android resources
+│       │       ├── drawable/               # Custom vector drawables
+│       │       ├── mipmap-anydpi-v26/      # Adaptive app launcher icons
+│       │       ├── values/                 # Base themes & default strings
+│       │       ├── values-en/              # English strings
+│       │       ├── values-ja/              # Japanese strings
+│       │       ├── values-zh-rCN/          # Simplified Chinese strings
+│       │       ├── values-zh-rTW/          # Traditional Chinese strings
+│       │       └── xml/                    # FileProvider & backup rules
+│       └── test/                           # Unit and Robolectric tests
+├── .github/                                # GitHub Actions CI/CD workflows
+│   ├── ISSUE_TEMPLATE/                     # Community issue templates
+│   │   ├── bug_report.md                   # Bug report template
+│   │   └── feature_request.md              # Feature suggestion template
+│   └── workflows/                          # Workflows
+│       ├── ci.yml                          # Continuous integration pipeline
+│       └── release.yml                     # Automated 64-bit release build
+├── gradle/
+│   └── libs.versions.toml                  # Version Catalog for dependencies
+├── Screenshot/                             # Screenshots and assets
+│   └── logo.svg                            # App white-background vector logo
+├── CONTRIBUTING.md                         # Contributing guide
+├── CHANGELOG.md                            # Release changelog
+├── SECURITY.md                             # Security policy
+├── LICENSE                                 # Apache 2.0 License
+├── build.gradle.kts                        # Root project build file
+├── gradle.properties                       # Gradle JVM properties
+├── settings.gradle.kts                     # Gradle settings & modules
+├── README_zh.md                            # Simplified Chinese documentation
+└── README.md                               # English documentation
 ```
 
 ---
@@ -134,7 +194,7 @@ Output directory: `app/build/outputs/apk/release/`
 
 ### Requirements
 - **OS Version**: Android 8.0 (API Level 26) or higher
-- **Architecture**: `arm64-v8a` / `x86_64` (64-bit only)
+- **Architecture**: `arm64-v8a` / `x86_64` (64-bit native build, ~3.4MB APK size)
 
 ### Permissions
 - `READ_MEDIA_IMAGES` / `READ_MEDIA_VIDEO`: Read local live photos & videos on Android 13+
