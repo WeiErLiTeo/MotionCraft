@@ -103,6 +103,10 @@ The Android Motion Photo format encapsulates JPEG image data and MP4 video data 
 
 ```
 MotionCraft/
+├── .github/                    # CI/CD workflows and issue templates
+│   ├── ISSUE_TEMPLATE/         # Bug report and feature request templates
+│   └── workflows/              # GitHub Actions release and verification workflows
+├── Screenshot/                 # App preview screenshots and app icon
 ├── app/                        # Main Android application module
 │   ├── build.gradle.kts        # Module build configuration (64-bit ABI filter & R8)
 │   ├── proguard-rules.pro      # ProGuard / R8 optimization rules
@@ -112,25 +116,26 @@ MotionCraft/
 │       │   ├── java/com/example/
 │       │   │   ├── MainActivity.kt
 │       │   │   ├── core/       # Core conversion engine and media protocols
-│       │   │   │   ├── converter/     # Motion format converters
+│       │   │   │   ├── converter/     # Motion format converters (LivePhotoToolConverter)
 │       │   │   │   ├── media/         # Image processing, video transcoding & frame cache
-│       │   │   │   └── protocol/      # Vendor live photo protocol definitions
-│       │   │   ├── data/       # Room database and local persistence
+│       │   │   │   └── protocol/      # Vendor live photo protocol definitions & packer
+│       │   │   ├── data/       # Room database and local persistence (AppDatabase)
 │       │   │   ├── ui/         # Jetpack Compose UI
 │       │   │   │   ├── LivePhotoApp.kt# Main navigation container
-│       │   │   │   ├── components/    # Player, cards, sliders and drawer components
-│       │   │   │   ├── screens/       # Gallery, Convert, Pair, Diagnostics and Settings
+│       │   │   │   ├── components/    # Player, cards, wavy sliders and drawer components
+│       │   │   │   ├── screens/       # Gallery, Convert, Pair, Details, Diagnostics & Settings
 │       │   │   │   └── theme/         # Material 3 dynamic color scheme and typography
 │       │   │   ├── util/       # XMP detector, parser and logger
-│       │   │   └── viewmodel/  # Architecture ViewModels
+│       │   │   └── viewmodel/  # Architecture ViewModels (LivePhotoViewModel)
 │       │   └── res/            # App icons, localized strings (zh/en/ja) and styles
 │       └── test/               # Local JVM and Robolectric unit tests
-├── .github/                    # CI/CD workflows and issue templates
-│   ├── ISSUE_TEMPLATE/         # Bug report and feature request templates
-│   └── workflows/              # GitHub Actions release and verification workflows
-├── Screenshot/                 # App preview screenshots and app icon
-├── CONTRIBUTING.md             # Contribution guidelines
+├── gradle/
+│   └── libs.versions.toml      # Gradle Version Catalog
+├── build.gradle.kts            # Root build script
+├── settings.gradle.kts         # Project settings
+├── gradle.properties           # Gradle environment configuration
 ├── CHANGELOG.md                # Release notes and changelog
+├── CONTRIBUTING.md             # Contribution guidelines
 ├── SECURITY.md                 # Security policy
 ├── LICENSE                     # Open-source license (Apache 2.0)
 ├── README_zh.md                # Simplified Chinese documentation

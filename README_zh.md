@@ -103,6 +103,10 @@ Android Motion Photo 格式将 JPEG 封面图与 MP4 视频文件存储在同一
 
 ```
 MotionCraft/
+├── .github/                    # CI/CD 自动化构建与发布配置
+│   ├── ISSUE_TEMPLATE/         # Bug 报告与功能建议模板
+│   └── workflows/              # 自动打包 Release 与持续集成工作流
+├── Screenshot/                 # 应用截图与白底应用图标
 ├── app/                        # Android 应用主模块
 │   ├── build.gradle.kts        # 模块构建配置 (纯 64 位 ABI 过滤与混淆)
 │   ├── proguard-rules.pro      # ProGuard / R8 优化混淆规则
@@ -112,25 +116,26 @@ MotionCraft/
 │       │   ├── java/com/example/
 │       │   │   ├── MainActivity.kt
 │       │   │   ├── core/       # 核心转换引擎与媒体协议
-│       │   │   │   ├── converter/     # 实况格式转换器
-│       │   │   │   ├── media/         # 图像处理器、视频转码与帧缓存
-│       │   │   │   └── protocol/      # 各厂商实况协议定义与打包封装
-│       │   │   ├── data/       # Room 数据库与实况索引持久化
+│       │   │   │   ├── converter/     # 实况格式转换器 (LivePhotoToolConverter)
+│       │   │   │   ├── media/         # 图像处理、视频转码与缩略图缓存
+│       │   │   │   └── protocol/      # 厂商协议定义与打包封装器
+│       │   │   ├── data/       # Room 数据库持久化 (AppDatabase)
 │       │   │   ├── ui/         # Jetpack Compose 界面与组件
-│       │   │   │   ├── LivePhotoApp.kt# 主界面与导航栏
+│       │   │   │   ├── LivePhotoApp.kt# 主界面与导航容器
 │       │   │   │   ├── components/    # 播放器、卡片、波浪滑块与抽屉组件
-│       │   │   │   ├── screens/       # 图集、转换、配对、诊断与设置页面
+│       │   │   │   ├── screens/       # 图集、转换、配对、详情、诊断与设置
 │       │   │   │   └── theme/         # Material 3 动态色彩与排版主题
-│       │   │   ├── util/       # XMP 探测解析与日志管理器
-│       │   │   └── viewmodel/  # 全局状态管理 ViewModel
-│       │   └── res/            # 图标、多语言字符串 (zh/en/ja) 与主题
+│       │   │   ├── util/       # 实况元数据解析与日志管理器
+│       │   │   └── viewmodel/  # 全局状态管理 LivePhotoViewModel
+│       │   └── res/            # 图标、多语言字符串 (zh/en/ja) 与样式
 │       └── test/               # 单元测试与 Robolectric 测试
-├── .github/                    # CI/CD 自动化构建与发布配置
-│   ├── ISSUE_TEMPLATE/         # Bug 报告与功能建议模板
-│   └── workflows/              # 自动打包 Release 与持续集成工作流
-├── Screenshot/                 # 应用截图与白底应用图标
-├── CONTRIBUTING.md             # 贡献指南
+├── gradle/
+│   └── libs.versions.toml      # Gradle 依赖版本目录 (Version Catalog)
+├── build.gradle.kts            # 根工程构建脚本
+├── settings.gradle.kts         # 工程设置配置
+├── gradle.properties           # Gradle 属性配置
 ├── CHANGELOG.md                # 更新日志
+├── CONTRIBUTING.md             # 贡献指南
 ├── SECURITY.md                 # 安全政策
 ├── LICENSE                     # 开源协议 (Apache 2.0)
 ├── README_zh.md                # 简体中文说明文档
