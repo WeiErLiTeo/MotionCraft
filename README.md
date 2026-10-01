@@ -74,7 +74,7 @@ The application allows you to scan and play embedded motion photos, extract vide
 
 | Gallery | Video to Live | Dual Pairing | Settings |
 | :---: | :---: | :---: | :---: |
-| <img src="Screenshot/01_gallery.png" width="220" alt="Gallery" /> | <img src="Screenshot/02_convert.png" width="220" alt="Video to Live" /> | <img src="Screenshot/03_pairing.png" width="320" alt="Dual Pairing" /> | <img src="Screenshot/04_settings.png" width="220" alt="Settings" /> |
+| <img src="Screenshot/01_gallery.png" width="220" alt="Gallery" /> | <img src="Screenshot/02_convert.png" width="220" alt="Video to Live" /> | <img src="Screenshot/03_pairing.png" width="220" alt="Dual Pairing" /> | <img src="Screenshot/04_settings.png" width="220" alt="Settings" /> |
 | Local motion photo discovery | Cover extraction & synthesis | Manual picture & video merge | App preferences & themes |
 
 ---
