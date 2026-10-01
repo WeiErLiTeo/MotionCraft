@@ -5,7 +5,11 @@
 </p>
 
 <p align="center">
-  <b>Android 实况照片 (Live Photos / Motion Photos) 查看、转换、合成与批量管理应用</b>
+  <b>Android Live Photos / Motion Photos Viewer, Converter, Merger & Manager</b>
+</p>
+
+<p align="center">
+  <a href="README_zh.md"><b>🇨🇳 中文说明文档 (Chinese Version)</b></a>
 </p>
 
 <p align="center">
@@ -13,64 +17,64 @@
   <a href="https://kotlinlang.org"><img src="https://img.shields.io/badge/Kotlin-1.9.0-blue.svg?logo=kotlin" alt="Kotlin"></a>
   <a href="https://developer.android.com/jetpack/compose"><img src="https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4?logo=jetpackcompose" alt="Jetpack Compose"></a>
   <a href="https://www.android.com/"><img src="https://img.shields.io/badge/Platform-Android%208.0%2B-green.svg?logo=android" alt="Platform"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/Version-1.0.0-orange.svg" alt="Version"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/Version-1.2.2-orange.svg" alt="Version"></a>
 </p>
 
 ---
 
-## 📖 项目简介
+## 📖 Introduction
 
-**MotionCraft** 是一款运行于 Android 平台的实况照片工具。
-应用提供实况照片扫描播放、提取视频/封面、视频转实况照片以及图片视频配对合成功能。
+**MotionCraft** is an Android utility designed for viewing, converting, synthesizing, and managing Motion Photos and Live Photos.
+It provides local motion photo scanning and playback, cover/video extraction, video-to-live-photo conversion, and manual image-video pairing.
 
 ---
 
-## 📊 格式与平台支持
+## 📊 Platform & Format Support
 
-| 平台 / 格式 | 状态 |
+| Platform / Format | Status |
 | :--- | :---: |
-| **Google Motion Photo** | ✅ 已支持 |
-| **抖音实况照片分享 / 识别** | ✅ 已支持 |
-| **Apple Live Photo** | 🚧 开发中 |
-| **Xiaomi 小米实况照片** | 🚧 开发中 |
-| **OPPO / OnePlus 实况照片** | 🚧 开发中 |
-| **vivo / iQOO 实况照片** | 🚧 开发中 |
+| **Google Motion Photo** | ✅ Supported |
+| **Xiaomi Live Photo** | ✅ Supported |
+| **OPPO / OnePlus Live Photo** | ✅ Supported |
+| **TikTok / Douyin Live Photo Share** | ✅ Supported |
+| **Apple Live Photo** | 🚧 In Development |
+| **vivo / iQOO Live Photo** | 🚧 In Development |
 
-> 不同厂商的实况照片实现并不完全相同。即使都采用“静态图片 + 动态视频”的基本结构，其 XMP、EXIF、MP4 封装、文件布局以及厂商私有元数据仍可能存在差异。
+> Different manufacturers implement Live Photos differently. Even though they share the "static image + dynamic video" structure, differences exist in XMP/EXIF tags, MP4 embedding layout, and private metadata.
 >
-> 平台状态以 MotionCraft 当前实际完成的兼容性为准。
+> Platform status reflects actual compatibility implemented in MotionCraft.
 
 ---
 
-## 🌟 核心功能
+## 🌟 Key Features
 
-- 📸 **实况图集管理**
-  - 自动扫描本地相册中包含微视频 (`MicroVideoOffset`) 的实况照片。
-  - 支持网格列表查看与长按多选批量删除。
-- 🎬 **实况照片播放**
-  - 长按卡片即可播放动态微视频，支持全屏预览与手势交互。
-- 🔄 **视频与实况互转**
-  - 从普通视频生成标准的 Android Motion Photo (JPEG + MP4)。
-  - 从 Live Photo 中提取独立的 MP4 视频与 JPEG 封面图片。
-- 🔗 **图片与视频合成**
-  - 支持选择独立的图片与短视频，写入 XMP 元数据并合成为实况照片。
-- 🛠️ **XMP 元数据查看**
-  - 查看媒体文件的 `GCamera:MicroVideo` 和 `MicroVideoOffset` 等元数据参数。
+- 📸 **Live Photo Gallery**
+  - Automatically scans local albums for Motion Photos containing embedded micro-video (`MicroVideoOffset`).
+  - Smooth grid view with multi-select and batch delete support.
+- 🎬 **Motion Photo Playback**
+  - Long-press any card to play embedded micro-videos with full-screen gesture controls.
+- 🔄 **Video & Live Photo Converter**
+  - Convert standard videos into Android Motion Photos (JPEG + MP4).
+  - Extract standalone MP4 videos and JPEG covers from Live Photos.
+- 🔗 **Image & Video Pairing**
+  - Pick any standalone image and short video clip, write XMP metadata, and combine them into a Live Photo.
+- 🛠️ **XMP Metadata Inspector**
+  - Inspect parameters like `GCamera:MicroVideo` and `MicroVideoOffset`.
 
 ---
 
-## 📱 应用界面
+## 📱 App Screenshots
 
-| 实况图集 | 视频转实况 | 双选配对 | 系统设置 |
+| Gallery | Video to Live | Dual Pairing | Settings |
 | :---: | :---: | :---: | :---: |
-| <img src="Screenshot/01_gallery.png" width="220" alt="实况图集" /> | <img src="Screenshot/02_convert.png" width="220" alt="视频转实况" /> | <img src="Screenshot/03_pairing.png" width="220" alt="双选配对" /> | <img src="Screenshot/04_settings.png" width="220" alt="系统设置" /> |
-| 本地实况照片识别与展示 | 视频截取封面与合成 | 图片与视频手动合并 | 基础配置与主题设置 |
+| <img src="Screenshot/01_gallery.png" width="220" alt="Gallery" /> | <img src="Screenshot/02_convert.png" width="220" alt="Convert" /> | <img src="Screenshot/03_pairing.png" width="220" alt="Pairing" /> | <img src="Screenshot/04_settings.png" width="220" alt="Settings" /> |
+| Scan & Play Local Photos | Extract Cover & Convert | Manual Image/Video Merge | Theme & Preferences |
 
 ---
 
-## 🔬 技术原理
+## 🔬 How It Works
 
-Android Motion Photo 格式将 JPEG 封面图与 MP4 视频文件存储在同一文件中：
+Android Motion Photo format stores the JPEG cover image and MP4 video data inside a single file:
 
 ```
 +--------------------------------+----------------------------+
@@ -82,63 +86,63 @@ Android Motion Photo 格式将 JPEG 封面图与 MP4 视频文件存储在同一
   +-- MicroVideoOffset Specifies -+
 ```
 
-1. **XMP 偏移定位**：读取 JPEG 标头（`0xFFE1` APP1 Marker），解析 `GCamera:MicroVideoOffset` 获取末尾 MP4 视频流的起始字节位置。
-2. **视频提取**：使用 `RandomAccessFile` 根据偏移量直接定位并读取尾部 MP4 数据。
-3. **播放控制**：基于 Media3 ExoPlayer 绑定 Compose View 进行手势触发播放。
+1. **XMP Offset Parsing**: Reads JPEG header (`0xFFE1` APP1 Marker) and parses `GCamera:MicroVideoOffset` to locate the starting byte of the trailing MP4 stream.
+2. **Video Extraction**: Uses `RandomAccessFile` to seek and read the trailing MP4 data by byte offset.
+3. **Playback Control**: Integrates Media3 ExoPlayer with Jetpack Compose views for gesture-triggered playback.
 
 ---
 
-## 📂 项目结构
+## 📂 Project Structure
 
 ```
 MotionCraft/
-├── app/                        # Android 应用主模块
+├── app/                        # Main Android application module
 │   └── src/
 │       ├── main/
 │       │   ├── java/com/example/
-│       │   │   ├── data/       # Room 数据库、Entity、DAO 与 Repository
-│       │   │   ├── model/      # LivePhoto、XmpMetadata 等数据结构
-│       │   │   ├── parser/     # XMP 元数据解析与文件偏移提取
-│       │   │   ├── ui/         # Jetpack Compose 界面 (Home, Player, Converter, Settings)
-│       │   │   └── util/       # XMP 写入、视频编码与文件工具
-│       │   └── res/            # 图标、字符串 (strings.xml)、主题等资源
-│       └── test/               # 单元测试与 Robolectric 测试
-├── .github/                    # CI/CD 与 Workflows 配置
-├── Screenshot/                 # 应用截图目录
-├── CONTRIBUTING.md             # 贡献指南
-├── CHANGELOG.md                # 更新日志
-├── SECURITY.md                 # 安全政策
-├── LICENSE                     # 开源协议 (Apache 2.0)
-└── README.md                   # 项目说明文档
+│       │   │   ├── core/       # Conversion engine, media processing & protocols
+│       │   │   ├── data/       # Room Database, entities & persistence
+│       │   │   ├── ui/         # Jetpack Compose UI (Screens & Components)
+│       │   │   └── util/       # Logging & motion photo helpers
+│       │   └── res/            # Drawables, strings & theme resources
+│       └── test/               # Unit and Robolectric tests
+├── .github/                    # CI/CD workflows & issue templates
+├── Screenshot/                 # App preview screenshots
+├── CONTRIBUTING.md             # Contribution guidelines
+├── CHANGELOG.md                # Release notes & changelog
+├── SECURITY.md                 # Security policy
+├── LICENSE                     # Apache 2.0 License
+├── README_zh.md                # Chinese documentation
+└── README.md                   # Project documentation
 ```
 
 ---
 
-## 🚀 构建说明
+## 🚀 Build Instructions
 
-使用 Gradle 编译 Release APK：
+Build Release APK using Gradle:
 
 ```bash
 ./gradlew assembleRelease
 ```
 
-构建产物目录：`app/build/outputs/apk/release/`
+Output directory: `app/build/outputs/apk/release/`
 
 ---
 
-## ⚙️ 系统要求与权限
+## ⚙️ Requirements & Permissions
 
-### 系统要求
-- **系统版本**：Android 8.0 (API Level 26) 及更高版本
-- **处理器架构**：`arm64-v8a` / `x86_64`（纯 64 位）
+### Requirements
+- **OS Version**: Android 8.0 (API Level 26) or higher
+- **Architecture**: `arm64-v8a` / `x86_64` (64-bit only)
 
-### 权限说明
-- `READ_MEDIA_IMAGES` / `READ_MEDIA_VIDEO`：Android 13+ 本地实况照片及视频读取
-- `READ_EXTERNAL_STORAGE`：Android 12 及以下读取本地媒体文件
-- `WRITE_EXTERNAL_STORAGE`：Android 9 及以下保存生成的实况照片到相册
+### Permissions
+- `READ_MEDIA_IMAGES` / `READ_MEDIA_VIDEO`: Read local live photos & videos on Android 13+
+- `READ_EXTERNAL_STORAGE`: Read media files on Android 12 and below
+- `WRITE_EXTERNAL_STORAGE`: Save generated Live Photos on Android 9 and below
 
 ---
 
-## 📄 开源协议
+## 📄 License
 
-本项目基于 [Apache 2.0 License](LICENSE) 协议开源。
+This project is licensed under the [Apache 2.0 License](LICENSE).
