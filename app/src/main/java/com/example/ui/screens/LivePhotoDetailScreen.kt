@@ -7,10 +7,9 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import kotlin.OptIn
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,24 +28,25 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
-import kotlinx.coroutines.isActive
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
@@ -67,36 +67,38 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
-import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.example.R
 import com.example.core.converter.LivePhotoToolConverter
 import com.example.core.media.VideoProcessor
+import com.example.core.protocol.AppleLivePhotoArchiveHelper
 import com.example.data.LivePhotoRecord
+import com.example.ui.components.ExoTextureVideoView
 import com.example.ui.components.SquigglyWavySlider
 import com.example.ui.components.VideoTrimSlider
 import com.example.util.DebugLogManager
 import com.example.viewmodel.LivePhotoViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.media3.common.util.UnstableApi::class)
 @Composable
 fun LivePhotoDetailScreen(
     record: LivePhotoRecord,
@@ -104,6 +106,7 @@ fun LivePhotoDetailScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val coroutineScope = rememberCoroutineScope()
 
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -115,6 +118,9 @@ fun LivePhotoDetailScreen(
 
     var inspectInfo by remember { mutableStateOf<LivePhotoToolConverter.ExtractionInfo?>(null) }
     var isProcessing by remember { mutableStateOf(false) }
+    var exportDialogState by remember { mutableStateOf<com.example.ui.components.ExportProgressUiState?>(null) }
+
+    com.example.ui.components.ExportProgressFloatingDialog(state = exportDialogState)
 
     var selectedImageFormat by remember { mutableStateOf("JPEG") }
     var currentSeekTimeMs by remember { mutableLongStateOf(0L) }
@@ -123,13 +129,61 @@ fun LivePhotoDetailScreen(
     var trimStartMs by remember { mutableLongStateOf(0L) }
     var trimEndMs by remember { mutableLongStateOf(0L) }
     var previewFrames by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
-    var liveSeekFrameBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
     var isPreviewPlaying by remember { mutableStateOf(false) }
-    var exoPlayer by remember { mutableStateOf<ExoPlayer?>(null) }
+    var isMuted by remember { mutableStateOf(false) }
+    var hasRenderedFirstFrame by remember { mutableStateOf(false) }
+    var lastDispatchedSeekWallMs by remember { mutableLongStateOf(0L) }
+    var lastDispatchedTargetMs by remember { mutableLongStateOf(-1L) }
+
+    val exoPlayer = remember {
+        com.example.ui.components.PlayerDecoderConfig.createExoPlayer(context).apply {
+            repeatMode = Player.REPEAT_MODE_ALL
+            playWhenReady = false
+            volume = 1f
+            setSeekParameters(androidx.media3.exoplayer.SeekParameters.EXACT)
+        }
+    }
+
+    LaunchedEffect(isMuted) {
+        exoPlayer.volume = if (isMuted) 0f else 1f
+    }
+
+    DisposableEffect(exoPlayer) {
+        val listener = object : Player.Listener {
+            override fun onRenderedFirstFrame() {
+                hasRenderedFirstFrame = true
+            }
+        }
+        exoPlayer.addListener(listener)
+        onDispose {
+            exoPlayer.removeListener(listener)
+        }
+    }
+
+    // Automatically pause both video and audio when user exits to home screen or locks screen
+    DisposableEffect(lifecycleOwner, exoPlayer) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                exoPlayer.pause()
+                isPreviewPlaying = false
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            exoPlayer.release()
+        }
+    }
 
     LaunchedEffect(record) {
-        val info = LivePhotoToolConverter.inspectLivePhoto(context, record)
+        hasRenderedFirstFrame = false
+        isPreviewPlaying = false
+        exoPlayer.pause()
+
+        val info = withContext(Dispatchers.IO) {
+            LivePhotoToolConverter.inspectLivePhoto(context, record)
+        }
         inspectInfo = info
         trimStartMs = 0L
         trimEndMs = info.videoDurationMs.coerceAtLeast(100L)
@@ -137,12 +191,10 @@ fun LivePhotoDetailScreen(
 
         val vFile = info.videoFile
         if (vFile != null && vFile.exists()) {
-            val player = ExoPlayer.Builder(context).build().apply {
-                setMediaItem(MediaItem.fromUri(vFile.absolutePath))
-                repeatMode = Player.REPEAT_MODE_ALL
-                prepare()
-            }
-            exoPlayer = player
+            exoPlayer.setMediaItem(MediaItem.fromUri(Uri.fromFile(vFile)))
+            exoPlayer.prepare()
+            exoPlayer.seekTo(0L)
+            lastDispatchedTargetMs = 0L
 
             withContext(Dispatchers.IO) {
                 val frames = com.example.core.media.VideoThumbnailCache.prefetchThumbnails(
@@ -154,35 +206,86 @@ fun LivePhotoDetailScreen(
                     thumbHeight = 140
                 )
                 previewFrames = frames
-                liveSeekFrameBitmap = com.example.core.media.VideoThumbnailCache.getOrExtractFrame(context, Uri.fromFile(vFile), 0L)
             }
         }
     }
 
-    LaunchedEffect(exoPlayer, isPreviewPlaying, selectedTab, trimStartMs, trimEndMs) {
-        val player = exoPlayer ?: return@LaunchedEffect
+    // Direct hardware-decoded seeking on ExoPlayer without any static Bitmap overlay or disk I/O race
+    val seekVideoSmoothly: (Long, Boolean) -> Unit = { rawTargetMs, forceCommit ->
+        val maxDur = (inspectInfo?.videoDurationMs ?: 1500L).coerceAtLeast(100L)
+        val targetMs = rawTargetMs.coerceIn(0L, maxDur)
+        currentSeekTimeMs = targetMs
+        if (isPreviewPlaying) {
+            isPreviewPlaying = false
+            exoPlayer.pause()
+        }
+        val nowWall = android.os.SystemClock.uptimeMillis()
+        if (forceCommit || (nowWall - lastDispatchedSeekWallMs >= 25L && targetMs != lastDispatchedTargetMs)) {
+            lastDispatchedSeekWallMs = nowWall
+            lastDispatchedTargetMs = targetMs
+            exoPlayer.seekTo(targetMs)
+        }
+    }
+
+    LaunchedEffect(isPreviewPlaying, selectedTab, trimStartMs, trimEndMs) {
         if (isPreviewPlaying) {
             while (isActive && isPreviewPlaying) {
-                val pos = player.currentPosition
+                val pos = exoPlayer.currentPosition.coerceAtLeast(0L)
                 if (selectedTab == 0) {
                     currentSeekTimeMs = pos
-                } else if (selectedTab == 1 && pos >= trimEndMs) {
-                    player.seekTo(trimStartMs)
+                    lastDispatchedTargetMs = pos
+                } else if (selectedTab == 1) {
+                    if (pos >= trimEndMs) {
+                        exoPlayer.seekTo(trimStartMs)
+                        currentSeekTimeMs = trimStartMs
+                        lastDispatchedTargetMs = trimStartMs
+                    } else {
+                        currentSeekTimeMs = pos.coerceIn(trimStartMs, trimEndMs.coerceAtLeast(trimStartMs))
+                        lastDispatchedTargetMs = currentSeekTimeMs
+                    }
                 }
-                kotlinx.coroutines.delay(40)
+                kotlinx.coroutines.delay(33)
             }
         }
     }
 
-    DisposableEffect(Unit) {
-        onDispose {
-            exoPlayer?.release()
-            exoPlayer = null
+    val togglePlayPause = {
+        val totalMs = (inspectInfo?.videoDurationMs ?: 1500L).coerceAtLeast(100L)
+        val nextPlay = !isPreviewPlaying
+        isPreviewPlaying = nextPlay
+        DebugLogManager.interaction("LivePhotoDetailScreen", "Toggle preview play: $nextPlay")
+        if (nextPlay) {
+            if (selectedTab == 1) {
+                if (currentSeekTimeMs < trimStartMs || currentSeekTimeMs >= trimEndMs - 40L) {
+                    currentSeekTimeMs = trimStartMs
+                    lastDispatchedTargetMs = trimStartMs
+                    exoPlayer.seekTo(trimStartMs)
+                } else if (kotlin.math.abs(exoPlayer.currentPosition - currentSeekTimeMs) > 60L) {
+                    exoPlayer.seekTo(currentSeekTimeMs)
+                }
+            } else {
+                if (currentSeekTimeMs >= totalMs - 40L) {
+                    currentSeekTimeMs = 0L
+                    lastDispatchedTargetMs = 0L
+                    exoPlayer.seekTo(0L)
+                } else if (kotlin.math.abs(exoPlayer.currentPosition - currentSeekTimeMs) > 60L) {
+                    exoPlayer.seekTo(currentSeekTimeMs)
+                }
+            }
+            exoPlayer.playWhenReady = true
+            exoPlayer.play()
+        } else {
+            exoPlayer.pause()
+            val pausedPos = exoPlayer.currentPosition.coerceIn(0L, totalMs)
+            currentSeekTimeMs = pausedPos
+            lastDispatchedTargetMs = pausedPos
         }
     }
 
     BackHandler {
         DebugLogManager.interaction("LivePhotoDetailScreen", "Back pressed")
+        exoPlayer.pause()
+        isPreviewPlaying = false
         onBack()
     }
 
@@ -199,6 +302,8 @@ fun LivePhotoDetailScreen(
                 navigationIcon = {
                     IconButton(onClick = {
                         DebugLogManager.interaction("LivePhotoDetailScreen", "Click back button")
+                        exoPlayer.pause()
+                        isPreviewPlaying = false
                         onBack()
                     }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
@@ -247,32 +352,18 @@ fun LivePhotoDetailScreen(
                     .aspectRatio(16f / 10f)
                     .padding(horizontal = 16.dp, vertical = 8.dp)
                     .clip(RoundedCornerShape(24.dp))
-                    .background(Color.Black),
+                    .background(Color.Black)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {
+                        if (inspectInfo?.videoFile != null) {
+                            togglePlayPause()
+                        }
+                    },
                 contentAlignment = Alignment.Center
             ) {
-                if (selectedTab == 0 && !isPreviewPlaying && liveSeekFrameBitmap != null) {
-                    Image(
-                        bitmap = liveSeekFrameBitmap!!.asImageBitmap(),
-                        contentDescription = null,
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else if (exoPlayer != null && inspectInfo?.videoFile != null) {
-                    AndroidView(
-                        factory = { ctx ->
-                            PlayerView(ctx).apply {
-                                player = exoPlayer
-                                useController = false
-                                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                                layoutParams = android.view.ViewGroup.LayoutParams(
-                                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                                    android.view.ViewGroup.LayoutParams.MATCH_PARENT
-                                )
-                            }
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
+                if (!hasRenderedFirstFrame || inspectInfo?.videoFile == null) {
                     AsyncImage(
                         model = record.coverPath,
                         contentDescription = null,
@@ -282,35 +373,51 @@ fun LivePhotoDetailScreen(
                 }
 
                 if (inspectInfo?.videoFile != null) {
-                    Box(
+                    ExoTextureVideoView(
+                        exoPlayer = exoPlayer,
+                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer { alpha = if (hasRenderedFirstFrame) 1f else 0f }
+                    )
+
+                    Row(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(12.dp)
-                            .size(44.dp)
-                            .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.6f))
-                            .clickable {
-                                isPreviewPlaying = !isPreviewPlaying
-                                DebugLogManager.interaction("LivePhotoDetailScreen", "Toggle preview play: $isPreviewPlaying")
-                                if (isPreviewPlaying) {
-                                    if (selectedTab == 1) {
-                                        exoPlayer?.seekTo(trimStartMs)
-                                    } else {
-                                        exoPlayer?.seekTo(currentSeekTimeMs)
-                                    }
-                                    exoPlayer?.play()
-                                } else {
-                                    exoPlayer?.pause()
-                                }
-                            },
-                        contentAlignment = Alignment.Center
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(
-                            imageVector = if (isPreviewPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(24.dp)
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.6f))
+                                .clickable { isMuted = !isMuted },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.6f))
+                                .clickable { togglePlayPause() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (isPreviewPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -329,7 +436,7 @@ fun LivePhotoDetailScreen(
                             DebugLogManager.interaction("LivePhotoDetailScreen", "Switch tab to $index: $title")
                             selectedTab = index
                             isPreviewPlaying = false
-                            exoPlayer?.pause()
+                            exoPlayer.pause()
                         },
                         text = {
                             Text(text = title, fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal)
@@ -393,18 +500,10 @@ fun LivePhotoDetailScreen(
                             SquigglyWavySlider(
                                 value = currentSeekTimeMs.toFloat(),
                                 onValueChange = { msVal ->
-                                    val ms = msVal.toLong()
-                                    currentSeekTimeMs = ms
-                                    isPreviewPlaying = false
-                                    exoPlayer?.pause()
-                                    exoPlayer?.seekTo(ms)
-                                    val vFile = inspectInfo?.videoFile
-                                    if (vFile != null && vFile.exists()) {
-                                        val cached = com.example.core.media.VideoThumbnailCache.getFromMemory(Uri.fromFile(vFile), ms)
-                                        if (cached != null && !cached.isRecycled) {
-                                            liveSeekFrameBitmap = cached
-                                        }
-                                    }
+                                    seekVideoSmoothly(msVal.toLong(), false)
+                                },
+                                onValueChangeFinished = {
+                                    seekVideoSmoothly(currentSeekTimeMs, true)
                                 },
                                 valueRange = 0f..totalMs.toFloat(),
                                 isPlaying = isPreviewPlaying,
@@ -423,10 +522,7 @@ fun LivePhotoDetailScreen(
                                 Button(
                                     onClick = {
                                         val ms = (currentSeekTimeMs - 100L).coerceAtLeast(0L)
-                                        currentSeekTimeMs = ms
-                                        isPreviewPlaying = false
-                                        exoPlayer?.pause()
-                                        exoPlayer?.seekTo(ms)
+                                        seekVideoSmoothly(ms, true)
                                     },
                                     shape = RoundedCornerShape(10.dp),
                                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
@@ -437,10 +533,7 @@ fun LivePhotoDetailScreen(
                                 Button(
                                     onClick = {
                                         val ms = (currentSeekTimeMs - 50L).coerceAtLeast(0L)
-                                        currentSeekTimeMs = ms
-                                        isPreviewPlaying = false
-                                        exoPlayer?.pause()
-                                        exoPlayer?.seekTo(ms)
+                                        seekVideoSmoothly(ms, true)
                                     },
                                     shape = RoundedCornerShape(10.dp),
                                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
@@ -451,10 +544,7 @@ fun LivePhotoDetailScreen(
                                 Button(
                                     onClick = {
                                         val ms = (currentSeekTimeMs + 50L).coerceAtMost(totalMs)
-                                        currentSeekTimeMs = ms
-                                        isPreviewPlaying = false
-                                        exoPlayer?.pause()
-                                        exoPlayer?.seekTo(ms)
+                                        seekVideoSmoothly(ms, true)
                                     },
                                     shape = RoundedCornerShape(10.dp),
                                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
@@ -465,10 +555,7 @@ fun LivePhotoDetailScreen(
                                 Button(
                                     onClick = {
                                         val ms = (currentSeekTimeMs + 100L).coerceAtMost(totalMs)
-                                        currentSeekTimeMs = ms
-                                        isPreviewPlaying = false
-                                        exoPlayer?.pause()
-                                        exoPlayer?.seekTo(ms)
+                                        seekVideoSmoothly(ms, true)
                                     },
                                     shape = RoundedCornerShape(10.dp),
                                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
@@ -482,6 +569,11 @@ fun LivePhotoDetailScreen(
                             Button(
                                 onClick = {
                                     isProcessing = true
+                                    exportDialogState = com.example.ui.components.ExportProgressUiState(
+                                        title = "正在导出单帧高清图像",
+                                        stepDescription = "正在解码 ${"%.2f".format(currentSeekTimeMs / 1000f)}s 处画面并编码为 $selectedImageFormat...",
+                                        progressFraction = 0.45f
+                                    )
                                     DebugLogManager.interaction("LivePhotoDetailScreen", "Extract image at $currentSeekTimeMs ms, format=$selectedImageFormat")
                                     coroutineScope.launch {
                                         val ok = LivePhotoToolConverter.extractAndSaveImage(
@@ -490,8 +582,9 @@ fun LivePhotoDetailScreen(
                                             timeMs = currentSeekTimeMs,
                                             format = selectedImageFormat
                                         )
+                                        exportDialogState = null
                                         isProcessing = false
-                                        Toast.makeText(context, if (ok) "OK" else "Error", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, if (ok) "已导出图像至系统相册" else "导出失败", Toast.LENGTH_SHORT).show()
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth().height(50.dp),
@@ -527,15 +620,21 @@ fun LivePhotoDetailScreen(
                                 videoDuration = inspectInfo?.videoDurationMs ?: 1500L,
                                 trimStartMs = trimStartMs,
                                 trimEndMs = trimEndMs,
+                                currentPlaybackMs = currentSeekTimeMs.coerceIn(trimStartMs, trimEndMs.coerceAtLeast(trimStartMs)),
                                 onTrimChanged = { start, end ->
                                     trimStartMs = start
                                     trimEndMs = end
+                                    if (currentSeekTimeMs < start) {
+                                        seekVideoSmoothly(start, true)
+                                    } else if (currentSeekTimeMs > end) {
+                                        seekVideoSmoothly(end, true)
+                                    }
                                 },
                                 onScrubbing = { scrubMs ->
                                     if (scrubMs != null) {
-                                        isPreviewPlaying = false
-                                        exoPlayer?.pause()
-                                        exoPlayer?.seekTo(scrubMs)
+                                        seekVideoSmoothly(scrubMs, false)
+                                    } else {
+                                        seekVideoSmoothly(currentSeekTimeMs, true)
                                     }
                                 },
                                 showDirectInput = true
@@ -558,13 +657,23 @@ fun LivePhotoDetailScreen(
                             Button(
                                 onClick = {
                                     isProcessing = true
+                                    exportDialogState = com.example.ui.components.ExportProgressUiState(
+                                        title = "正在导出独立视频",
+                                        stepDescription = "第 1/2 步：裁剪视频片段并执行音轨时间戳对齐...",
+                                        progressFraction = 0.40f
+                                    )
                                     DebugLogManager.interaction("LivePhotoDetailScreen", "Export video: start=$trimStartMs, end=$trimEndMs, keepAudio=$keepAudioInVideo")
                                     coroutineScope.launch {
                                         val ok = withContext(Dispatchers.IO) {
                                             val vFile = inspectInfo?.videoFile
                                             if (vFile != null && vFile.exists()) {
                                                 val trimmedFile = File(context.cacheDir, "trimmed_${System.currentTimeMillis()}.mp4")
-                                                val trimOk = VideoProcessor.trimVideo(context, Uri.fromFile(vFile), trimmedFile, trimStartMs, trimEndMs)
+                                                val trimOk = VideoProcessor.trimVideo(context, Uri.fromFile(vFile), trimmedFile, trimStartMs, trimEndMs, keepAudioInVideo)
+                                                exportDialogState = com.example.ui.components.ExportProgressUiState(
+                                                    title = "正在导出独立视频",
+                                                    stepDescription = "第 2/2 步：正在写入系统相册 Movies/MotionCraft...",
+                                                    progressFraction = 0.85f
+                                                )
                                                 if (trimOk) {
                                                     val dummyRecord = record.copy(videoPath = trimmedFile.absolutePath)
                                                     LivePhotoToolConverter.extractAndSaveVideo(context, dummyRecord, keepAudioInVideo)
@@ -573,8 +682,9 @@ fun LivePhotoDetailScreen(
                                                 LivePhotoToolConverter.extractAndSaveVideo(context, record, keepAudioInVideo)
                                             }
                                         }
+                                        exportDialogState = null
                                         isProcessing = false
-                                        Toast.makeText(context, if (ok) "OK" else "Error", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, if (ok) "已导出独立视频至系统相册" else "导出视频失败", Toast.LENGTH_SHORT).show()
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth().height(50.dp),
@@ -609,6 +719,53 @@ fun LivePhotoDetailScreen(
                                     DetailRow(stringResource(R.string.detail_cover_size), "${(info?.coverSize ?: 0L) / 1024} KB")
                                     DetailRow(stringResource(R.string.detail_video_size), "${(info?.videoLength ?: 0L) / 1024} KB")
                                     DetailRow(stringResource(R.string.detail_total_file_size), "${(info?.fileSize ?: 0L) / 1024} KB")
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(16.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    isProcessing = true
+                                    exportDialogState = com.example.ui.components.ExportProgressUiState(
+                                        title = "正在打包苹果 .livp 实况",
+                                        stepDescription = "正在注入 Apple ContentIdentifier UUID 并打包成 .livp 归档...",
+                                        progressFraction = 0.55f
+                                    )
+                                    DebugLogManager.interaction("LivePhotoDetailScreen", "Export Apple .livp package")
+                                    coroutineScope.launch {
+                                        val livpFile = AppleLivePhotoArchiveHelper.exportToAppleLivp(context, record)
+                                        exportDialogState = null
+                                        isProcessing = false
+                                        if (livpFile != null && livpFile.exists()) {
+                                            Toast.makeText(context, context.getString(R.string.export_apple_livp_success), Toast.LENGTH_SHORT).show()
+                                            try {
+                                                val uri = FileProvider.getUriForFile(
+                                                    context,
+                                                    "${context.packageName}.fileprovider",
+                                                    livpFile
+                                                )
+                                                val intent = Intent(Intent.ACTION_SEND).apply {
+                                                    type = "application/octet-stream"
+                                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                }
+                                                context.startActivity(Intent.createChooser(intent, context.getString(R.string.export_apple_livp)))
+                                            } catch (_: Exception) {}
+                                        } else {
+                                            Toast.makeText(context, "Error", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth().height(50.dp),
+                                shape = RoundedCornerShape(14.dp),
+                                enabled = !isProcessing
+                            ) {
+                                if (isProcessing) {
+                                    CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                                } else {
+                                    Icon(Icons.Default.Archive, contentDescription = null)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(stringResource(R.string.export_apple_livp), fontWeight = FontWeight.Bold)
                                 }
                             }
                         }

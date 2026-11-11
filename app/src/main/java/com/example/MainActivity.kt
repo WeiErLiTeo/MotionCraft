@@ -22,7 +22,7 @@ class MainActivity : ComponentActivity() {
       val context = if (lang != "system") {
           val locale = when (lang) {
               "en" -> Locale("en")
-              "ja" -> Locale("ja")
+              "ru" -> Locale("ru")
               "zh-TW" -> Locale("zh", "TW")
               "zh-CN" -> Locale("zh", "CN")
               else -> Locale.getDefault()

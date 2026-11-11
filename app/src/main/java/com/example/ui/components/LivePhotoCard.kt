@@ -180,8 +180,8 @@ fun LivePhotoCard(
     if (showDeleteConfirm) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
-            title = { Text("删除确认") },
-            text = { Text("确定要删除这条实况记录吗？(不会删除原文件)") },
+            title = { Text(stringResource(R.string.delete_confirm_title)) },
+            text = { Text(stringResource(R.string.delete_confirm_single_msg)) },
             confirmButton = {
                 Button(
                     onClick = {
@@ -189,7 +189,7 @@ fun LivePhotoCard(
                         onDelete()
                     }
                 ) {
-                    Text("删除", color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(R.string.btn_delete), color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {

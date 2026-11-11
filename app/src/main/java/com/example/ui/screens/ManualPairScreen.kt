@@ -1,12 +1,14 @@
 package com.example.ui.screens
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -71,6 +73,17 @@ fun ManualPairScreen(viewModel: LivePhotoViewModel) {
     val trimEndMs by viewModel.trimEndMs.collectAsStateWithLifecycle()
     val isGenerating by viewModel.isGenerating.collectAsStateWithLifecycle()
     val generationResult by viewModel.generationResult.collectAsStateWithLifecycle()
+    val exportProgressState by viewModel.exportProgressState.collectAsStateWithLifecycle()
+    val brandMode by viewModel.brandMode.collectAsStateWithLifecycle()
+
+    com.example.ui.components.ExportProgressFloatingDialog(state = exportProgressState)
+
+    BackHandler(enabled = (videoUri != null || multiImageUris.isNotEmpty()) && !isGenerating) {
+        DebugLogManager.interaction("ManualPairScreen", "Back gesture: cancel synthesis")
+        videoUri = null
+        multiImageUris = emptyList()
+        viewModel.selectVideoForTrim(context, null)
+    }
 
     val singleImgPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) {
@@ -254,7 +267,15 @@ fun ManualPairScreen(viewModel: LivePhotoViewModel) {
                             modifier = Modifier.fillMaxWidth().aspectRatio(3f/4f).clip(RoundedCornerShape(24.dp)).background(Color.Black),
                             contentAlignment = Alignment.Center
                         ) {
-                            InlineVideoPlayer(videoUri = videoUri!!, trimStartMs = trimStartMs, trimEndMs = trimEndMs)
+                            InlineVideoPlayer(
+                                videoUri = videoUri!!,
+                                trimStartMs = trimStartMs,
+                                trimEndMs = trimEndMs,
+                                videoDurationMs = videoDuration,
+                                onDurationDetected = { realDur ->
+                                    viewModel.onPlayerDurationResolved(context, realDur)
+                                }
+                            )
                             if (isGenerating) {
                                 Box(
                                     modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha=0.6f)),
@@ -311,7 +332,40 @@ fun ManualPairScreen(viewModel: LivePhotoViewModel) {
                     }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = stringResource(R.string.brand_protocol_setting),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        com.example.core.protocol.LivePhotoBrandMode.entries.forEach { mode ->
+                            val isSelected = brandMode == mode
+                            val labelText = when (mode) {
+                                com.example.core.protocol.LivePhotoBrandMode.FUSION -> stringResource(R.string.protocol_fusion)
+                                com.example.core.protocol.LivePhotoBrandMode.OPPO -> stringResource(R.string.protocol_oppo)
+                                com.example.core.protocol.LivePhotoBrandMode.XIAOMI -> stringResource(R.string.protocol_xiaomi)
+                                com.example.core.protocol.LivePhotoBrandMode.SAMSUNG -> stringResource(R.string.protocol_samsung)
+                                else -> mode.displayName
+                            }
+                            androidx.compose.material3.FilterChip(
+                                selected = isSelected,
+                                onClick = { viewModel.setBrandMode(mode) },
+                                label = { Text(labelText) }
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
 
                 OutlinedTextField(
                     value = title,

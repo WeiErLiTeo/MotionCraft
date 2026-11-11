@@ -82,15 +82,33 @@ fun ConvertScreen(viewModel: LivePhotoViewModel) {
     val extractedCoverFrame by viewModel.extractedCoverFrame.collectAsStateWithLifecycle()
     val customCoverUri by viewModel.customCoverUri.collectAsStateWithLifecycle()
     val defaultTitle by viewModel.defaultTitle.collectAsStateWithLifecycle()
+    val exportProgressState by viewModel.exportProgressState.collectAsStateWithLifecycle()
 
     var title by remember { mutableStateOf("") }
     var currentPlaybackPositionMs by remember { mutableLongStateOf(trimStartMs) }
     var previewSeekTimeMs by remember { mutableStateOf<Long?>(null) }
+    var isBoundaryPreview by remember { mutableStateOf(false) }
+
+    LaunchedEffect(trimStartMs, trimEndMs) {
+        if (currentPlaybackPositionMs < trimStartMs) {
+            currentPlaybackPositionMs = trimStartMs
+        } else if (currentPlaybackPositionMs > trimEndMs) {
+            currentPlaybackPositionMs = trimEndMs
+        }
+    }
+
+    com.example.ui.components.ExportProgressFloatingDialog(state = exportProgressState)
 
     LaunchedEffect(defaultTitle) {
         if (defaultTitle.isNotBlank()) {
             title = defaultTitle
         }
+    }
+
+    androidx.activity.compose.BackHandler(enabled = selectedVideoUri != null && !isGenerating) {
+        DebugLogManager.interaction("ConvertScreen", "Back gesture -> cancel video selection")
+        viewModel.selectVideoForTrim(context, null)
+        title = ""
     }
 
     val singleVideoPicker = rememberLauncherForActivityResult(
@@ -202,8 +220,18 @@ fun ConvertScreen(viewModel: LivePhotoViewModel) {
                     videoUri = selectedVideoUri!!,
                     trimStartMs = trimStartMs,
                     trimEndMs = trimEndMs,
+                    videoDurationMs = videoDuration,
                     previewSeekTimeMs = previewSeekTimeMs,
+                    isBoundaryPreview = isBoundaryPreview,
+                    isPausedExternal = isGenerating,
+                    onClearPreviewSeek = {
+                        previewSeekTimeMs = null
+                        isBoundaryPreview = false
+                    },
                     onPositionUpdate = { pos -> currentPlaybackPositionMs = pos },
+                    onDurationDetected = { realDur ->
+                        viewModel.onPlayerDurationResolved(context, realDur)
+                    },
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -220,10 +248,18 @@ fun ConvertScreen(viewModel: LivePhotoViewModel) {
                     viewModel.updateTrimRange(start, end)
                 },
                 onScrubbing = { scrubMs ->
+                    isBoundaryPreview = false
                     previewSeekTimeMs = scrubMs
                     if (scrubMs != null) {
                         currentPlaybackPositionMs = scrubMs
                     }
+                },
+                onBoundaryPreview = { boundaryMs ->
+                    isBoundaryPreview = boundaryMs != null
+                    previewSeekTimeMs = boundaryMs
+                },
+                onWindowChanged = { winStart, winEnd ->
+                    viewModel.refreshTimelineWindowThumbnails(context, winStart, winEnd)
                 }
             )
 
@@ -364,6 +400,13 @@ fun ConvertScreen(viewModel: LivePhotoViewModel) {
                 ) {
                     LivePhotoBrandMode.entries.forEach { mode ->
                         val isSelected = brandMode == mode
+                        val labelText = when (mode) {
+                            LivePhotoBrandMode.FUSION -> stringResource(R.string.protocol_fusion)
+                            LivePhotoBrandMode.OPPO -> stringResource(R.string.protocol_oppo)
+                            LivePhotoBrandMode.XIAOMI -> stringResource(R.string.protocol_xiaomi)
+                            LivePhotoBrandMode.SAMSUNG -> stringResource(R.string.protocol_samsung)
+                            else -> mode.displayName
+                        }
                         Button(
                             onClick = {
                                 DebugLogManager.interaction("ConvertScreen", "Selected brand protocol: ${mode.name}")
@@ -380,7 +423,7 @@ fun ConvertScreen(viewModel: LivePhotoViewModel) {
                                 Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
                             }
-                            Text(mode.displayName, fontSize = 12.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
+                            Text(labelText, fontSize = 12.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
                         }
                     }
                 }

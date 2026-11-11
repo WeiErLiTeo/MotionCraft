@@ -45,12 +45,30 @@ object LivePhotoToolConverter {
             val coverFile = File(record.coverPath)
             val directVideoFile = File(record.videoPath)
             val cacheDir = File(context.cacheDir, "extracted_inspect").apply { mkdirs() }
-            val resolvedVideoFile = if (directVideoFile.exists() && directVideoFile.length() > 0) {
+            val rawResolvedFile = if (directVideoFile.exists() && directVideoFile.length() > 0) {
                 directVideoFile
             } else if (coverFile.exists()) {
                 val tempVideo = File(cacheDir, "${record.id}_temp.mp4")
                 ImageProcessor.extractVideoFromMotionPhoto(coverFile, tempVideo)
                 if (tempVideo.exists() && tempVideo.length() > 0) tempVideo else null
+            } else null
+
+            val resolvedVideoFile = if (rawResolvedFile != null && rawResolvedFile.exists()) {
+                if (VideoProcessor.isPlayableMp4(rawResolvedFile)) {
+                    rawResolvedFile
+                } else {
+                    val healedFile = File(cacheDir, "${record.id}_${record.timestamp}_healed.mp4")
+                    if (VideoProcessor.healToStandardMp4(context, rawResolvedFile, healedFile) && healedFile.exists()) {
+                        if (directVideoFile.exists() && record.id >= 0) {
+                            runCatching { healedFile.copyTo(directVideoFile, overwrite = true) }
+                            directVideoFile
+                        } else {
+                            healedFile
+                        }
+                    } else {
+                        rawResolvedFile
+                    }
+                }
             } else null
 
             var duration = 0L
@@ -78,11 +96,24 @@ object LivePhotoToolConverter {
                     val read = input.read(buf)
                     if (read > 0) String(buf, 0, read, Charsets.ISO_8859_1) else ""
                 }
+                val hasSamsungTail = try {
+                    if (coverFile.length() >= 32) {
+                        val raf = java.io.RandomAccessFile(coverFile, "r")
+                        val tail = ByteArray(8)
+                        raf.seek(coverFile.length() - 8)
+                        raf.readFully(tail)
+                        raf.close()
+                        String(tail, 4, 4, Charsets.US_ASCII) == "SEFT"
+                    } else false
+                } catch (_: Exception) {
+                    false
+                }
                 brand = when {
+                    hasSamsungTail || headerBytes.contains("MotionPhoto_Data") -> "三星 (Samsung One UI SEF)"
                     headerBytes.contains("OpCamera") || headerBytes.contains("oplustag") -> "OPPO / OnePlus"
                     headerBytes.contains("GCamera:MicroVideo") -> "小米 (Xiaomi)"
                     headerBytes.contains("VCamera") -> "vivo"
-                    headerBytes.contains("GCamera") -> "Google (标准)"
+                    headerBytes.contains("GCamera") -> "Google / 通用标准"
                     else -> "嵌入式实况"
                 }
             }
@@ -153,14 +184,31 @@ object LivePhotoToolConverter {
             val coverFile = File(record.coverPath)
             val bitmapToSave = if (timeMs > 0 && directVideoFile.exists() && directVideoFile.length() > 0) {
                 VideoProcessor.extractVideoFrame(context, Uri.fromFile(directVideoFile), timeMs)
+            } else if (timeMs > 0 && coverFile.exists()) {
+                val tempVid = File(context.cacheDir, "temp_frame_vid_${record.id}.mp4")
+                val extracted = ImageProcessor.extractVideoFromMotionPhoto(coverFile, tempVid)
+                val bmp = if (extracted && tempVid.exists()) {
+                    VideoProcessor.extractVideoFrame(context, Uri.fromFile(tempVid), timeMs)
+                } else null
+                tempVid.delete()
+                bmp ?: BitmapFactory.decodeFile(coverFile.absolutePath)
             } else if (coverFile.exists()) {
                 BitmapFactory.decodeFile(coverFile.absolutePath)
             } else null
 
             if (bitmapToSave == null) return@withContext false
 
-            val ext = if (format.uppercase().contains("PNG")) "png" else "jpg"
-            val mime = if (ext == "png") "image/png" else "image/jpeg"
+            val upperFmt = format.uppercase()
+            val ext = when {
+                upperFmt.contains("PNG") -> "png"
+                upperFmt.contains("WEBP") -> "webp"
+                else -> "jpg"
+            }
+            val mime = when (ext) {
+                "png" -> "image/png"
+                "webp" -> "image/webp"
+                else -> "image/jpeg"
+            }
             val fileName = "Extracted_${System.currentTimeMillis()}.$ext"
             val resolver = context.contentResolver
             val contentValues = ContentValues().apply {
@@ -173,10 +221,18 @@ object LivePhotoToolConverter {
             }
             val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues) ?: return@withContext false
             resolver.openOutputStream(uri)?.use { out ->
-                if (ext == "png") {
-                    bitmapToSave.compress(Bitmap.CompressFormat.PNG, 100, out)
-                } else {
-                    bitmapToSave.compress(Bitmap.CompressFormat.JPEG, 96, out)
+                when (ext) {
+                    "png" -> bitmapToSave.compress(Bitmap.CompressFormat.PNG, 100, out)
+                    "webp" -> {
+                        @Suppress("DEPRECATION")
+                        val webpFmt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            Bitmap.CompressFormat.WEBP_LOSSLESS
+                        } else {
+                            Bitmap.CompressFormat.WEBP
+                        }
+                        bitmapToSave.compress(webpFmt, 95, out)
+                    }
+                    else -> bitmapToSave.compress(Bitmap.CompressFormat.JPEG, 96, out)
                 }
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -198,43 +254,58 @@ object LivePhotoToolConverter {
     ): Boolean = withContext(Dispatchers.IO) {
         try {
             val videoFile = File(record.videoPath)
-            val resolver = context.contentResolver
-            val fileName = "Extracted_${System.currentTimeMillis()}.mp4"
-            val contentValues = ContentValues().apply {
-                put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
-                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/MotionCraft_Extract")
-                    put(MediaStore.Video.Media.IS_PENDING, 1)
-                }
-            }
-            val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, contentValues) ?: return@withContext false
-            var success = false
-            resolver.openOutputStream(uri)?.use { out ->
-                if (videoFile.exists() && videoFile.length() > 0) {
-                    videoFile.inputStream().use { input ->
-                        input.copyTo(out)
-                    }
-                    success = true
+            val tempExtracted = File(context.cacheDir, "temp_extract_${System.currentTimeMillis()}.mp4")
+            val tempProcessed = File(context.cacheDir, "temp_proc_${System.currentTimeMillis()}.mp4")
+
+            try {
+                val baseVideo = if (videoFile.exists() && videoFile.length() > 0) {
+                    videoFile
                 } else {
                     val coverFile = File(record.coverPath)
-                    val temp = File(context.cacheDir, "temp_extract_${System.currentTimeMillis()}.mp4")
-                    val extracted = ImageProcessor.extractVideoFromMotionPhoto(coverFile, temp)
-                    if (extracted && temp.exists() && temp.length() > 0) {
-                        temp.inputStream().use { input ->
-                            input.copyTo(out)
-                        }
-                        success = true
-                    }
-                    temp.delete()
+                    val ok = ImageProcessor.extractVideoFromMotionPhoto(coverFile, tempExtracted)
+                    if (ok && tempExtracted.exists() && tempExtracted.length() > 0) tempExtracted else null
+                } ?: return@withContext false
+
+                val finalSource = if (!keepAudio) {
+                    val stripped = VideoProcessor.trimVideo(
+                        context = context,
+                        inputUri = Uri.fromFile(baseVideo),
+                        outputFile = tempProcessed,
+                        startMs = 0L,
+                        endMs = 0L,
+                        includeAudio = false
+                    )
+                    if (stripped && tempProcessed.exists() && tempProcessed.length() > 0) tempProcessed else baseVideo
+                } else {
+                    baseVideo
                 }
+
+                val resolver = context.contentResolver
+                val fileName = "Extracted_${System.currentTimeMillis()}.mp4"
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
+                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/MotionCraft_Extract")
+                        put(MediaStore.Video.Media.IS_PENDING, 1)
+                    }
+                }
+                val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, contentValues) ?: return@withContext false
+                resolver.openOutputStream(uri)?.buffered(64 * 1024)?.use { out ->
+                    finalSource.inputStream().buffered(64 * 1024).use { input ->
+                        input.copyTo(out, 64 * 1024)
+                    }
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    contentValues.clear()
+                    contentValues.put(MediaStore.Video.Media.IS_PENDING, 0)
+                    resolver.update(uri, contentValues, null, null)
+                }
+                true
+            } finally {
+                tempExtracted.delete()
+                tempProcessed.delete()
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                contentValues.clear()
-                contentValues.put(MediaStore.Video.Media.IS_PENDING, 0)
-                resolver.update(uri, contentValues, null, null)
-            }
-            success
         } catch (e: Exception) {
             Log.e(TAG, "Extract video error", e)
             false

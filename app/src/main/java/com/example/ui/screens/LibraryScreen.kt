@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -9,6 +10,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,15 +20,19 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.Delete
@@ -35,15 +41,18 @@ import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -70,10 +79,18 @@ fun LibraryScreen(
 ) {
     val context = LocalContext.current
     val livePhotos by viewModel.allLivePhotos.collectAsStateWithLifecycle()
+    val archiveScanResult by viewModel.archiveScanResult.collectAsStateWithLifecycle()
+    val isBatchImporting by viewModel.isBatchImporting.collectAsStateWithLifecycle()
+    val batchProgress by viewModel.batchProgress.collectAsStateWithLifecycle()
 
     var isSelectionMode by remember { mutableStateOf(false) }
     var selectedRecords by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var showBatchDeleteConfirm by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = isSelectionMode) {
+        isSelectionMode = false
+        selectedRecords = emptySet()
+    }
 
     var showImportDialog by remember { mutableStateOf(false) }
     var importTitle by remember { mutableStateOf("") }
@@ -97,6 +114,14 @@ fun LibraryScreen(
         }
     }
 
+    val archivePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.scanArchiveForImport(context, uri)
+        }
+    }
+
     var importMenuExpanded by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -109,6 +134,8 @@ fun LibraryScreen(
                 label = "header"
             ) { selectionMode ->
                 if (selectionMode) {
+                    val allIds = remember(livePhotos) { livePhotos.map { it.id }.toSet() }
+                    val isAllSelected = allIds.isNotEmpty() && selectedRecords.size == allIds.size
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -116,30 +143,48 @@ fun LibraryScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = {
-                            isSelectionMode = false
-                            selectedRecords = emptySet()
-                        }) {
-                            Icon(Icons.Default.Close, contentDescription = "Cancel")
-                        }
-                        Text(
-                            text = "已选择 ${selectedRecords.size} 项",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        IconButton(
-                            onClick = {
-                                if (selectedRecords.isNotEmpty()) {
-                                    showBatchDeleteConfirm = true
-                                }
-                            },
-                            enabled = selectedRecords.isNotEmpty()
-                        ) {
-                            Icon(
-                                Icons.Default.Delete,
-                                contentDescription = "Delete",
-                                tint = if (selectedRecords.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = {
+                                isSelectionMode = false
+                                selectedRecords = emptySet()
+                            }) {
+                                Icon(Icons.Default.Close, contentDescription = "Cancel")
+                            }
+                            Text(
+                                text = stringResource(R.string.items_selected_count, selectedRecords.size),
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
                             )
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            TextButton(
+                                onClick = {
+                                    selectedRecords = if (isAllSelected) emptySet() else allIds
+                                },
+                                modifier = Modifier.testTag("select_all_button")
+                            ) {
+                                Text(
+                                    text = if (isAllSelected)
+                                        stringResource(R.string.archive_deselect_all)
+                                    else
+                                        stringResource(R.string.archive_select_all),
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    if (selectedRecords.isNotEmpty()) {
+                                        showBatchDeleteConfirm = true
+                                    }
+                                },
+                                enabled = selectedRecords.isNotEmpty()
+                            ) {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = "Delete",
+                                    tint = if (selectedRecords.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                                )
+                            }
                         }
                     }
                 } else {
@@ -194,6 +239,14 @@ fun LibraryScreen(
                                         documentPicker.launch(arrayOf("image/*"))
                                     },
                                     leadingIcon = { Icon(Icons.Default.Folder, contentDescription = null) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.import_from_archive)) },
+                                    onClick = {
+                                        importMenuExpanded = false
+                                        archivePicker.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream", "*/*"))
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Archive, contentDescription = null) }
                                 )
                             }
                         }
@@ -280,8 +333,8 @@ fun LibraryScreen(
     if (showBatchDeleteConfirm) {
         AlertDialog(
             onDismissRequest = { showBatchDeleteConfirm = false },
-            title = { Text("批量删除", fontWeight = FontWeight.Bold) },
-            text = { Text("确定要删除选中的 ${selectedRecords.size} 条记录吗？(不会删除原文件)") },
+            title = { Text(stringResource(R.string.batch_delete_title), fontWeight = FontWeight.Bold) },
+            text = { Text(stringResource(R.string.batch_delete_confirm_msg, selectedRecords.size)) },
             confirmButton = {
                 Button(
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
@@ -293,7 +346,7 @@ fun LibraryScreen(
                         showBatchDeleteConfirm = false
                     }
                 ) {
-                    Text("删除", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onError)
+                    Text(stringResource(R.string.btn_delete), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onError)
                 }
             },
             dismissButton = {
@@ -311,10 +364,10 @@ fun LibraryScreen(
                 selectedImportUri = null
                 importTitle = ""
             },
-            title = { Text("导入实况照片", fontWeight = FontWeight.Bold) },
+            title = { Text(stringResource(R.string.import_dialog_title), fontWeight = FontWeight.Bold) },
             text = {
                 Column {
-                    Text("系统将扫描此图片是否包含各大厂商(华为、小米、三星、Google)嵌入的实况视频，解析成功后即可直接在库中按压播放！", style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.import_dialog_desc), style = MaterialTheme.typography.bodyMedium)
                     Spacer(modifier = Modifier.height(16.dp))
                     OutlinedTextField(
                         value = importTitle,

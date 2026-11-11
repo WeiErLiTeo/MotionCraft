@@ -2,9 +2,12 @@ package com.example.core.protocol
 
 import android.media.ExifInterface
 import android.util.Log
+import com.example.core.zlc.ZlcGooglePlugin
+import com.example.core.zlc.ZlcMp4Util
+import com.example.core.zlc.ZlcSamsungPlugin
+import com.example.core.zlc.ZlcVivoSinglePlugin
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.io.RandomAccessFile
 
 object LivePhotoProtocolPacker {
     private const val TAG = "ProtocolPacker"
@@ -61,6 +64,7 @@ object LivePhotoProtocolPacker {
     }
 
     fun buildXiaomiMotionPhotoXmp(videoLength: Int, presentationTimestampUs: Long = 0L): ByteArray {
+        val ts = if (presentationTimestampUs >= 0L) presentationTimestampUs else 0L
         val xmpContent = """<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
 <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 5.1.0-jc003">
   <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
@@ -70,7 +74,7 @@ object LivePhotoProtocolPacker {
         xmlns:Item="http://ns.google.com/photos/1.0/container/item/"
         GCamera:MotionPhoto="1"
         GCamera:MotionPhotoVersion="1"
-        GCamera:MotionPhotoPresentationTimestampUs="$presentationTimestampUs">
+        GCamera:MotionPhotoPresentationTimestampUs="$ts">
       <Container:Directory>
         <rdf:Seq>
           <rdf:li rdf:parseType="Resource">
@@ -89,6 +93,7 @@ object LivePhotoProtocolPacker {
     }
 
     fun buildOppoXmp(videoLength: Int, presentationTimestampUs: Long = 0L): ByteArray {
+        val ts = if (presentationTimestampUs >= 0L) presentationTimestampUs else 0L
         val xmpContent = """<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
 <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 5.1.0-jc003">
   <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
@@ -99,8 +104,8 @@ object LivePhotoProtocolPacker {
         xmlns:Item="http://ns.google.com/photos/1.0/container/item/"
         GCamera:MotionPhoto="1"
         GCamera:MotionPhotoVersion="1"
-        GCamera:MotionPhotoPresentationTimestampUs="$presentationTimestampUs"
-        OpCamera:MotionPhotoPrimaryPresentationTimestampUs="$presentationTimestampUs"
+        GCamera:MotionPhotoPresentationTimestampUs="$ts"
+        OpCamera:MotionPhotoPrimaryPresentationTimestampUs="$ts"
         OpCamera:MotionPhotoOwner="oplus"
         OpCamera:OLivePhotoVersion="2"
         OpCamera:VideoLength="$videoLength"
@@ -123,6 +128,7 @@ object LivePhotoProtocolPacker {
     }
 
     fun buildFusionXmp(videoLength: Int, presentationTimestampUs: Long = 0L): ByteArray {
+        val ts = if (presentationTimestampUs >= 0L) presentationTimestampUs else 0L
         val xmpContent = """<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
 <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 5.1.0-jc003">
   <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
@@ -134,8 +140,8 @@ object LivePhotoProtocolPacker {
         xmlns:Item="http://ns.google.com/photos/1.0/container/item/"
         GCamera:MotionPhoto="1"
         GCamera:MotionPhotoVersion="1"
-        GCamera:MotionPhotoPresentationTimestampUs="$presentationTimestampUs"
-        OpCamera:MotionPhotoPrimaryPresentationTimestampUs="$presentationTimestampUs"
+        GCamera:MotionPhotoPresentationTimestampUs="$ts"
+        OpCamera:MotionPhotoPrimaryPresentationTimestampUs="$ts"
         OpCamera:MotionPhotoOwner="oplus"
         OpCamera:OLivePhotoVersion="2"
         OpCamera:VideoLength="$videoLength"
@@ -201,75 +207,62 @@ object LivePhotoProtocolPacker {
         presentationTimestampUs: Long = 0L,
         brandMode: LivePhotoBrandMode = LivePhotoBrandMode.FUSION
     ): ByteArray {
-        val out = ByteArrayOutputStream(jpegBytes.size + 4096)
-
         if (jpegBytes.size < 2 || jpegBytes[0] != 0xFF.toByte() || jpegBytes[1] != 0xD8.toByte()) {
             return jpegBytes
         }
-
-        out.write(0xFF)
-        out.write(0xD8)
 
         val xmpSegment = when (brandMode) {
             LivePhotoBrandMode.FUSION -> buildFusionXmp(videoLength, presentationTimestampUs)
             LivePhotoBrandMode.OPPO -> buildOppoXmp(videoLength, presentationTimestampUs)
             LivePhotoBrandMode.XIAOMI -> buildXiaomiMotionPhotoXmp(videoLength, presentationTimestampUs)
+            else -> buildFusionXmp(videoLength, presentationTimestampUs)
         }
-
-        out.write(xmpSegment)
-
-        val totalJpegSize = jpegBytes.size + xmpSegment.size + 78
-        val mpfSegment = buildMpfSegment(totalJpegSize)
-        out.write(mpfSegment)
 
         var pos = 2
         var hasExif = false
 
         while (pos < jpegBytes.size - 1) {
-            if (jpegBytes[pos] != 0xFF.toByte()) {
-                out.write(jpegBytes, pos, jpegBytes.size - pos)
-                break
-            }
+            if (jpegBytes[pos] != 0xFF.toByte()) break
 
             val marker = jpegBytes[pos + 1].toInt() and 0xFF
-            if (marker == 0xD9 || marker == 0xDA) {
-                out.write(jpegBytes, pos, jpegBytes.size - pos)
-                break
-            }
+            if (marker == 0xD9 || marker == 0xDA) break
 
-            if (pos + 3 >= jpegBytes.size) {
-                out.write(jpegBytes, pos, jpegBytes.size - pos)
-                break
-            }
-
+            if (pos + 3 >= jpegBytes.size) break
             val length = ((jpegBytes[pos + 2].toInt() and 0xFF) shl 8) or (jpegBytes[pos + 3].toInt() and 0xFF)
             val segmentEnd = pos + 2 + length
 
-            if (segmentEnd > jpegBytes.size) {
-                out.write(jpegBytes, pos, jpegBytes.size - pos)
-                break
-            }
+            if (segmentEnd > jpegBytes.size) break
 
             if (marker == 0xE1) {
-                if (pos + 10 < jpegBytes.size &&
-                    String(jpegBytes.sliceArray(pos + 4 until pos + 10), Charsets.US_ASCII).startsWith("Exif")) {
-                    hasExif = true
+                if (pos + 10 <= jpegBytes.size) {
+                    val headerAscii = String(jpegBytes, pos + 4, 6, Charsets.US_ASCII)
+                    if (headerAscii.startsWith("Exif")) {
+                        hasExif = true
+                    }
                 }
             }
-
-            out.write(jpegBytes, pos, segmentEnd - pos)
             pos = segmentEnd
         }
 
-        if (!hasExif && (brandMode == LivePhotoBrandMode.OPPO || brandMode == LivePhotoBrandMode.FUSION)) {
-            val fallbackExif = buildOplusFallbackExifSegment()
-            val finalBytes = out.toByteArray()
-            val withExif = ByteArrayOutputStream(finalBytes.size + fallbackExif.size)
-            withExif.write(finalBytes, 0, 2)
-            withExif.write(fallbackExif)
-            withExif.write(finalBytes, 2, finalBytes.size - 2)
-            return withExif.toByteArray()
+        val fallbackExif = if (!hasExif && (brandMode == LivePhotoBrandMode.OPPO || brandMode == LivePhotoBrandMode.FUSION)) {
+            buildOplusFallbackExifSegment()
+        } else {
+            ByteArray(0)
         }
+
+        val mpfPlaceholderSize = 78
+        val totalJpegSize = jpegBytes.size + xmpSegment.size + fallbackExif.size + mpfPlaceholderSize
+        val mpfSegment = buildMpfSegment(totalJpegSize)
+
+        val out = ByteArrayOutputStream(totalJpegSize)
+        out.write(0xFF)
+        out.write(0xD8)
+        if (fallbackExif.isNotEmpty()) {
+            out.write(fallbackExif)
+        }
+        out.write(xmpSegment)
+        out.write(mpfSegment)
+        out.write(jpegBytes, 2, jpegBytes.size - 2)
 
         return out.toByteArray()
     }
@@ -282,34 +275,66 @@ object LivePhotoProtocolPacker {
         brandMode: LivePhotoBrandMode = LivePhotoBrandMode.FUSION
     ): Boolean {
         return try {
-            if (brandMode == LivePhotoBrandMode.OPPO || brandMode == LivePhotoBrandMode.FUSION) {
-                try {
-                    val exif = ExifInterface(coverFile.absolutePath)
-                    exif.setAttribute(ExifInterface.TAG_USER_COMMENT, "{\"oplustag\":8388608}")
-                    exif.saveAttributes()
-                } catch (e: Exception) {
-                    Log.w(TAG, "ExifInterface save error: ${e.message}")
+            if (!coverFile.exists() || !videoFile.exists() || videoFile.length() <= 0L) {
+                return false
+            }
+
+            when (brandMode) {
+                LivePhotoBrandMode.SAMSUNG -> {
+                    val coverBytes = coverFile.readBytes()
+                    val cacheDir = outputFile.parentFile ?: coverFile.parentFile ?: File(".")
+                    val cleanVideoBytes = ZlcMp4Util.sanitizeVideoTracksIfNeeded(videoFile.readBytes(), cacheDir)
+                    val packed = ZlcSamsungPlugin.pack(coverBytes, cleanVideoBytes)
+                    outputFile.writeBytes(packed)
+                    return outputFile.exists() && outputFile.length() > 0L
+                }
+                LivePhotoBrandMode.VIVO -> {
+                    val coverBytes = coverFile.readBytes()
+                    val cacheDir = outputFile.parentFile ?: coverFile.parentFile ?: File(".")
+                    val cleanVideoBytes = ZlcMp4Util.sanitizeVideoTracksIfNeeded(videoFile.readBytes(), cacheDir)
+                    val packed = ZlcVivoSinglePlugin.pack(coverBytes, cleanVideoBytes, presentationTimestampUs)
+                    outputFile.writeBytes(packed)
+                    return outputFile.exists() && outputFile.length() > 0L
+                }
+                LivePhotoBrandMode.GOOGLE -> {
+                    val coverBytes = coverFile.readBytes()
+                    val cacheDir = outputFile.parentFile ?: coverFile.parentFile ?: File(".")
+                    val cleanVideoBytes = ZlcMp4Util.sanitizeVideoTracksIfNeeded(videoFile.readBytes(), cacheDir)
+                    val packed = ZlcGooglePlugin.pack(coverBytes, cleanVideoBytes, presentationTimestampUs)
+                    outputFile.writeBytes(packed)
+                    return outputFile.exists() && outputFile.length() > 0L
+                }
+                LivePhotoBrandMode.FUSION, LivePhotoBrandMode.OPPO, LivePhotoBrandMode.XIAOMI -> {
+                    if (brandMode == LivePhotoBrandMode.OPPO || brandMode == LivePhotoBrandMode.FUSION) {
+                        try {
+                            val exif = ExifInterface(coverFile.absolutePath)
+                            exif.setAttribute(ExifInterface.TAG_USER_COMMENT, "{\"oplustag\":8388608}")
+                            exif.saveAttributes()
+                        } catch (e: Exception) {
+                            Log.w(TAG, "ExifInterface save error: ${e.message}")
+                        }
+                    }
+
+                    val coverBytes = coverFile.readBytes()
+                    val videoLength = videoFile.length().toInt()
+
+                    val modifiedJpeg = injectLivePhotoMetadata(
+                        jpegBytes = coverBytes,
+                        videoLength = videoLength,
+                        presentationTimestampUs = presentationTimestampUs,
+                        brandMode = brandMode
+                    )
+
+                    outputFile.outputStream().buffered(64 * 1024).use { out ->
+                        out.write(modifiedJpeg)
+                        videoFile.inputStream().buffered(64 * 1024).use { vIn ->
+                            vIn.copyTo(out, 64 * 1024)
+                        }
+                        out.flush()
+                    }
+                    return true
                 }
             }
-
-            val coverBytes = coverFile.readBytes()
-            val videoBytes = videoFile.readBytes()
-            val videoLength = videoBytes.size
-
-            val modifiedJpeg = injectLivePhotoMetadata(
-                jpegBytes = coverBytes,
-                videoLength = videoLength,
-                presentationTimestampUs = presentationTimestampUs,
-                brandMode = brandMode
-            )
-
-            outputFile.outputStream().buffered().use { out ->
-                out.write(modifiedJpeg)
-                out.write(videoBytes)
-                out.flush()
-            }
-
-            true
         } catch (e: Exception) {
             Log.e(TAG, "Package live photo error", e)
             false

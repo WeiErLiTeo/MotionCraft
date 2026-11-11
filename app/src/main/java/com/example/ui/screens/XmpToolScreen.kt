@@ -114,7 +114,7 @@ fun XmpToolScreen(viewModel: LivePhotoViewModel, onBack: () -> Unit = {}) {
                     xmpContent = if (extracted.isNotBlank()) extracted else defaultTemplate
                 }
             } catch (e: Exception) {
-                resultMessage = "读取照片元数据失败: ${e.message}"
+                resultMessage = "Error: ${e.message ?: ""}"
             }
         }
     }
@@ -124,14 +124,14 @@ fun XmpToolScreen(viewModel: LivePhotoViewModel, onBack: () -> Unit = {}) {
             TopAppBar(
                 title = {
                     Text(
-                        text = "照片元数据与 XMP 分析",
+                        text = androidx.compose.ui.res.stringResource(com.example.R.string.xmp_screen_title),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
                     }
                 },
                 windowInsets = TopAppBarDefaults.windowInsets
@@ -157,7 +157,7 @@ fun XmpToolScreen(viewModel: LivePhotoViewModel, onBack: () -> Unit = {}) {
             ) {
                 Icon(Icons.Default.ImageSearch, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("选择任意照片进行分析")
+                Text(androidx.compose.ui.res.stringResource(com.example.R.string.btn_open_xmp_tool))
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -170,7 +170,7 @@ fun XmpToolScreen(viewModel: LivePhotoViewModel, onBack: () -> Unit = {}) {
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(
-                            "当前文件: ${selectedImageUri?.lastPathSegment}",
+                            androidx.compose.ui.res.stringResource(com.example.R.string.xmp_current_file, selectedImageUri?.lastPathSegment ?: ""),
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.primary
@@ -188,12 +188,12 @@ fun XmpToolScreen(viewModel: LivePhotoViewModel, onBack: () -> Unit = {}) {
                     Tab(
                         selected = activeTab == 0,
                         onClick = { activeTab = 0 },
-                        text = { Text("EXIF 参数", fontWeight = FontWeight.Bold) }
+                        text = { Text(androidx.compose.ui.res.stringResource(com.example.R.string.xmp_tab_exif), fontWeight = FontWeight.Bold) }
                     )
                     Tab(
                         selected = activeTab == 1,
                         onClick = { activeTab = 1 },
-                        text = { Text("XMP 实况包", fontWeight = FontWeight.Bold) }
+                        text = { Text(androidx.compose.ui.res.stringResource(com.example.R.string.xmp_tab_packet), fontWeight = FontWeight.Bold) }
                     )
                 }
 
@@ -208,7 +208,7 @@ fun XmpToolScreen(viewModel: LivePhotoViewModel, onBack: () -> Unit = {}) {
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
                                 Text(
-                                    "照片 EXIF 参数详情",
+                                    androidx.compose.ui.res.stringResource(com.example.R.string.xmp_exif_detail_title),
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -242,7 +242,7 @@ fun XmpToolScreen(viewModel: LivePhotoViewModel, onBack: () -> Unit = {}) {
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        "XMP 实况/扩展元数据",
+                                        androidx.compose.ui.res.stringResource(com.example.R.string.xmp_packet_detail_title),
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -251,7 +251,7 @@ fun XmpToolScreen(viewModel: LivePhotoViewModel, onBack: () -> Unit = {}) {
                                             xmpContent = defaultTemplate
                                         }
                                     ) {
-                                        Text("一键填入实况模板", fontSize = 12.sp)
+                                        Text(androidx.compose.ui.res.stringResource(com.example.R.string.xmp_btn_fill_template), fontSize = 12.sp)
                                     }
                                 }
                                 Spacer(modifier = Modifier.height(8.dp))
@@ -265,7 +265,7 @@ fun XmpToolScreen(viewModel: LivePhotoViewModel, onBack: () -> Unit = {}) {
                                         fontFamily = FontFamily.Monospace,
                                         fontSize = 11.sp
                                     ),
-                                    label = { Text("XMP Content (可直接编辑)") }
+                                    label = { Text(androidx.compose.ui.res.stringResource(com.example.R.string.xmp_content_editable_label)) }
                                 )
                                 Spacer(modifier = Modifier.height(12.dp))
                                 Button(
@@ -277,7 +277,7 @@ fun XmpToolScreen(viewModel: LivePhotoViewModel, onBack: () -> Unit = {}) {
                                     modifier = Modifier.fillMaxWidth(),
                                     shape = RoundedCornerShape(16.dp)
                                 ) {
-                                    Text("写入/修改 XMP 并另存到相册")
+                                    Text(androidx.compose.ui.res.stringResource(com.example.R.string.xmp_btn_write_save))
                                 }
                             }
                         }

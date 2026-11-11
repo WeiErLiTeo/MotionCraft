@@ -76,13 +76,22 @@ fun LivePhotoApp(viewModel: LivePhotoViewModel) {
     var activeRecordForPlayback by remember { mutableStateOf<LivePhotoRecord?>(null) }
     var activeRecordForDetail by remember { mutableStateOf<LivePhotoRecord?>(null) }
     var isXmpToolOpen by remember { mutableStateOf(false) }
+    var isAppleHubOpen by remember { mutableStateOf(false) }
     var isDebugSheetOpen by remember { mutableStateOf(false) }
 
     val autoPlay by viewModel.autoPlayLivePhoto.collectAsStateWithLifecycle()
     val isFloatingDebugVisible by DebugLogManager.isFloatingWindowVisible.collectAsStateWithLifecycle()
     val selectedVideoUri by viewModel.selectedVideoUri.collectAsStateWithLifecycle()
+    val isArchiveWindowOpen by viewModel.isArchiveWindowOpen.collectAsStateWithLifecycle()
     val isTrimming = currentTab == 1 && selectedVideoUri != null
     val context = LocalContext.current
+
+    androidx.activity.compose.BackHandler(
+        enabled = currentTab != 0 && !isXmpToolOpen && !isAppleHubOpen && !isArchiveWindowOpen && activeRecordForDetail == null && activeRecordForPlayback == null && !isTrimming
+    ) {
+        DebugLogManager.interaction("Navigation", "Back gesture -> return to Library Tab")
+        currentTab = 0
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Scaffold(
@@ -162,9 +171,50 @@ fun LivePhotoApp(viewModel: LivePhotoViewModel) {
                         )
                         1 -> Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) { ConvertScreen(viewModel) }
                         2 -> Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) { ManualPairScreen(viewModel) }
-                        3 -> Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) { SettingsScreen(viewModel, onOpenXmpTool = { isXmpToolOpen = true }) }
+                        3 -> Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+                            SettingsScreen(
+                                viewModel = viewModel,
+                                onOpenXmpTool = { isXmpToolOpen = true },
+                                onOpenAppleHub = { isAppleHubOpen = true }
+                            )
+                        }
                     }
                 }
+            }
+        }
+
+        AnimatedVisibility(
+            visible = isAppleHubOpen,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.background
+            ) {
+                com.example.ui.screens.AppleLivePhotoScreen(
+                    viewModel = viewModel,
+                    onBack = { isAppleHubOpen = false }
+                )
+            }
+        }
+
+        AnimatedVisibility(
+            visible = isArchiveWindowOpen,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.background
+            ) {
+                com.example.ui.screens.ZipImportScreen(
+                    viewModel = viewModel,
+                    onClose = { viewModel.closeArchiveWindow() },
+                    onPlayRecord = { record -> activeRecordForPlayback = record }
+                )
             }
         }
 

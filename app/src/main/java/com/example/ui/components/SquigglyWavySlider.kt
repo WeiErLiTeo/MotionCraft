@@ -72,15 +72,24 @@ fun SquigglyWavySlider(
     var isDragging by remember { mutableStateOf(false) }
     var dragFraction by remember { mutableFloatStateOf(normalizedFraction) }
 
+    LaunchedEffect(normalizedFraction, isDragging) {
+        if (!isDragging) {
+            dragFraction = normalizedFraction
+        }
+    }
+
     val currentFraction = if (isDragging) dragFraction else normalizedFraction
 
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(48.dp)
+            .padding(horizontal = 4.dp)
             .pointerInput(valueRange) {
                 detectTapGestures { offset ->
-                    val fraction = (offset.x / size.width).coerceIn(0f, 1f)
+                    val usableWidth = size.width.toFloat().coerceAtLeast(1f)
+                    val fraction = (offset.x / usableWidth).coerceIn(0f, 1f)
+                    dragFraction = fraction
                     val newValue = valueRange.start + fraction * rangeSpan
                     currentOnValueChange(newValue)
                     currentOnValueChangeFinished?.invoke()
@@ -90,21 +99,26 @@ fun SquigglyWavySlider(
                 detectDragGestures(
                     onDragStart = { offset ->
                         isDragging = true
-                        val fraction = (offset.x / size.width).coerceIn(0f, 1f)
+                        val usableWidth = size.width.toFloat().coerceAtLeast(1f)
+                        val fraction = (offset.x / usableWidth).coerceIn(0f, 1f)
                         dragFraction = fraction
                         val newValue = valueRange.start + fraction * rangeSpan
                         currentOnValueChange(newValue)
                     },
                     onDragEnd = {
+                        val finalValue = valueRange.start + dragFraction * rangeSpan
+                        currentOnValueChange(finalValue)
                         isDragging = false
                         currentOnValueChangeFinished?.invoke()
                     },
                     onDragCancel = {
                         isDragging = false
+                        currentOnValueChangeFinished?.invoke()
                     },
                     onDrag = { change, _ ->
                         change.consume()
-                        val fraction = (change.position.x / size.width).coerceIn(0f, 1f)
+                        val usableWidth = size.width.toFloat().coerceAtLeast(1f)
+                        val fraction = (change.position.x / usableWidth).coerceIn(0f, 1f)
                         dragFraction = fraction
                         val newValue = valueRange.start + fraction * rangeSpan
                         currentOnValueChange(newValue)
@@ -116,7 +130,6 @@ fun SquigglyWavySlider(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(48.dp)
-                .padding(horizontal = 4.dp)
         ) {
             val width = size.width
             val height = size.height

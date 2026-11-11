@@ -54,9 +54,12 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
         val manufacturer = android.os.Build.MANUFACTURER.lowercase()
         val brand = android.os.Build.BRAND.lowercase()
         return when {
+            manufacturer.contains("samsung") || brand.contains("samsung") -> LivePhotoBrandMode.SAMSUNG
             manufacturer.contains("oppo") || manufacturer.contains("oneplus") ||
             brand.contains("oppo") || brand.contains("oneplus") || brand.contains("realme") -> LivePhotoBrandMode.OPPO
             manufacturer.contains("xiaomi") || brand.contains("xiaomi") || brand.contains("redmi") -> LivePhotoBrandMode.XIAOMI
+            manufacturer.contains("vivo") || brand.contains("vivo") || brand.contains("iqoo") -> LivePhotoBrandMode.VIVO
+            manufacturer.contains("google") || brand.contains("google") -> LivePhotoBrandMode.GOOGLE
             else -> LivePhotoBrandMode.FUSION
         }
     }
@@ -70,9 +73,25 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
     )
     val brandMode = _brandMode.asStateFlow()
 
+    private val _playerDecoderMode = MutableStateFlow(sharedPrefs.getInt("player_decoder_mode", 0))
+    val playerDecoderMode = _playerDecoderMode.asStateFlow()
+
+    private val _videoTranscodeMode = MutableStateFlow(sharedPrefs.getString("video_transcode_mode", "remux") ?: "remux")
+    val videoTranscodeMode = _videoTranscodeMode.asStateFlow()
+
     fun setBrandMode(mode: LivePhotoBrandMode) {
         sharedPrefs.edit().putInt("brand_mode", mode.id).apply()
         _brandMode.value = mode
+    }
+
+    fun setPlayerDecoderMode(mode: Int) {
+        sharedPrefs.edit().putInt("player_decoder_mode", mode).apply()
+        _playerDecoderMode.value = mode
+    }
+
+    fun setVideoTranscodeMode(mode: String) {
+        sharedPrefs.edit().putString("video_transcode_mode", mode).apply()
+        _videoTranscodeMode.value = mode
     }
 
     fun setThemeMode(mode: Int) {
@@ -129,6 +148,9 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
     private val _isGenerating = MutableStateFlow(false)
     val isGenerating = _isGenerating.asStateFlow()
 
+    private val _exportProgressState = MutableStateFlow<com.example.ui.components.ExportProgressUiState?>(null)
+    val exportProgressState = _exportProgressState.asStateFlow()
+
     private val _generationResult = MutableStateFlow<String?>(null)
     val generationResult = _generationResult.asStateFlow()
 
@@ -163,14 +185,15 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
                     val photos = livePhotoDao.getAllLivePhotosList()
                     val context = getApplication<Application>().applicationContext
                     for (photo in photos) {
+                        val coverFile = File(photo.coverPath)
                         val videoFile = File(photo.videoPath)
-                        if (videoFile.exists() && videoFile.length() > 0) {
+                        // Only heal missing/zero-byte cover files; never overwrite a valid embedded _motion.jpg!
+                        if ((!coverFile.exists() || coverFile.length() == 0L) && videoFile.exists() && videoFile.length() > 0) {
                             val videoUri = Uri.fromFile(videoFile)
                             val refreshedFrame = MotionPhotoHelper.extractVideoFrame(context, videoUri, 0L)
                             if (refreshedFrame != null) {
-                                val coverFile = File(photo.coverPath)
                                 FileOutputStream(coverFile).use { out ->
-                                    refreshedFrame.compress(Bitmap.CompressFormat.JPEG, 90, out)
+                                    refreshedFrame.compress(Bitmap.CompressFormat.JPEG, 92, out)
                                 }
                             }
                         }
@@ -183,21 +206,26 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun clearVideoFrames() {
-        val old = _videoFrames.value
+        // Do NOT call .recycle() on Bitmaps stored in VideoThumbnailCache LruCache!
         _videoFrames.value = emptyList()
-        old.forEach { if (!it.isRecycled) it.recycle() }
     }
 
     private fun clearExtractedFrame() {
-        val old = _extractedCoverFrame.value
+        // Do NOT call .recycle() on Bitmaps stored in VideoThumbnailCache LruCache!
         _extractedCoverFrame.value = null
-        if (old != null && !old.isRecycled) old.recycle()
     }
 
+    private var timelineThumbJob: kotlinx.coroutines.Job? = null
+
     fun selectVideoForTrim(context: Context, uri: Uri?) {
+        timelineThumbJob?.cancel()
         if (uri == null) {
             _selectedVideoUri.value = null
             _defaultTitle.value = ""
+            _videoDuration.value = 0L
+            _trimStartMs.value = 0L
+            _trimEndMs.value = 3000L
+            _coverTimeMs.value = 0L
             clearVideoFrames()
             clearExtractedFrame()
             return
@@ -206,11 +234,15 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
         clearExtractedFrame()
         _selectedVideoUri.value = uri
         _defaultTitle.value = queryFileName(context, uri)
+        _videoDuration.value = 0L
+        _trimStartMs.value = 0L
+        _trimEndMs.value = 3000L
+        _coverTimeMs.value = 0L
         _customCoverUri.value = null
         _generationResult.value = null
         com.example.util.DebugLogManager.interaction("ConvertScreen", "Selected video: $uri, defaultTitle=${_defaultTitle.value}")
 
-        viewModelScope.launch {
+        timelineThumbJob = viewModelScope.launch {
             val duration = withContext(Dispatchers.IO) {
                 MotionPhotoHelper.getVideoDuration(context, uri)
             }
@@ -220,8 +252,82 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
             _trimEndMs.value = defaultEnd
             _coverTimeMs.value = 0L
 
-            extractFrameAt(context, 0L)
-            extractPreviewFrames(context, uri)
+            // Sequence cover extraction and progressive timeline thumbnail extraction in a single IO pipeline
+            // so 4K/high-bitrate videos never suffer from multiple concurrent MediaMetadataRetriever instances.
+            val initialCover = withContext(Dispatchers.IO) {
+                com.example.core.media.VideoThumbnailCache.getOrExtractFrame(
+                    context = context,
+                    uri = uri,
+                    timeMs = 0L,
+                    targetWidth = 720,
+                    targetHeight = 720
+                )
+            }
+            if (initialCover != null && !initialCover.isRecycled) {
+                _extractedCoverFrame.value = initialCover
+            }
+
+            if (duration > 0L) {
+                val frames = com.example.core.media.VideoThumbnailCache.prefetchThumbnails(
+                    context = context,
+                    uri = uri,
+                    durationMs = duration,
+                    count = 8,
+                    thumbWidth = 144,
+                    thumbHeight = 144,
+                    windowStartMs = 0L,
+                    windowEndMs = duration,
+                    onProgressiveUpdate = { partialList ->
+                        _videoFrames.value = partialList
+                        if ((_extractedCoverFrame.value == null || _extractedCoverFrame.value?.isRecycled == true) && partialList.isNotEmpty()) {
+                            _extractedCoverFrame.value = partialList.first()
+                        }
+                    }
+                )
+                _videoFrames.value = frames
+                if ((_extractedCoverFrame.value == null || _extractedCoverFrame.value?.isRecycled == true) && frames.isNotEmpty()) {
+                    _extractedCoverFrame.value = frames.first()
+                }
+            }
+        }
+    }
+
+    fun onPlayerDurationResolved(context: Context, realDurationMs: Long) {
+        if (realDurationMs <= 100L) return
+        val currentDur = _videoDuration.value
+        if (currentDur <= 0L || kotlin.math.abs(realDurationMs - currentDur) > 400L) {
+            val previousDur = currentDur
+            _videoDuration.value = realDurationMs
+            if (_trimEndMs.value > realDurationMs || (previousDur <= 0L && _trimEndMs.value == 3000L)) {
+                _trimEndMs.value = minOf(realDurationMs, 3000L)
+            }
+            refreshTimelineWindowThumbnails(context, 0L, realDurationMs)
+        }
+    }
+
+    fun refreshTimelineWindowThumbnails(context: Context, windowStartMs: Long, windowEndMs: Long) {
+        val uri = _selectedVideoUri.value ?: return
+        val duration = _videoDuration.value
+        if (duration <= 0L) return
+        timelineThumbJob?.cancel()
+        timelineThumbJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(120)
+            val frames = com.example.core.media.VideoThumbnailCache.prefetchThumbnails(
+                context = context,
+                uri = uri,
+                durationMs = duration,
+                count = 8,
+                thumbWidth = 144,
+                thumbHeight = 144,
+                windowStartMs = windowStartMs,
+                windowEndMs = windowEndMs,
+                onProgressiveUpdate = { partialList ->
+                    _videoFrames.value = partialList
+                }
+            )
+            if (frames.isNotEmpty()) {
+                _videoFrames.value = frames
+            }
         }
     }
 
@@ -253,6 +359,7 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
         _trimEndMs.value = e
         if (_coverTimeMs.value < s || _coverTimeMs.value > e) {
             _coverTimeMs.value = s
+            extractFrameAt(getApplication(), s)
         }
     }
 
@@ -261,6 +368,7 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
         _trimStartMs.value = newStart
         if (_coverTimeMs.value < newStart || _coverTimeMs.value > _trimEndMs.value) {
             _coverTimeMs.value = newStart
+            extractFrameAt(getApplication(), newStart)
         }
     }
 
@@ -271,40 +379,29 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
         _trimEndMs.value = newEnd
         if (_coverTimeMs.value < _trimStartMs.value || _coverTimeMs.value > newEnd) {
             _coverTimeMs.value = _trimStartMs.value
-        }
-    }
-
-    private fun extractPreviewFrames(context: Context, uri: Uri) {
-        viewModelScope.launch {
-            val duration = _videoDuration.value
-            if (duration <= 0) return@launch
-            val frames = withContext(Dispatchers.IO) {
-                com.example.core.media.VideoThumbnailCache.prefetchThumbnails(
-                    context = context,
-                    uri = uri,
-                    durationMs = duration,
-                    count = 8,
-                    thumbWidth = 140,
-                    thumbHeight = 140
-                )
-            }
-            _videoFrames.value = frames
+            extractFrameAt(getApplication(), _trimStartMs.value)
         }
     }
 
     fun extractFrameAt(context: Context, timeMs: Long) {
         val uri = _selectedVideoUri.value ?: return
         _coverTimeMs.value = timeMs
-        val cached = com.example.core.media.VideoThumbnailCache.getFromMemory(uri, timeMs)
+        val cached = com.example.core.media.VideoThumbnailCache.getFromMemory(uri, timeMs, 720, 720)
         if (cached != null && !cached.isRecycled) {
             _extractedCoverFrame.value = cached
             return
         }
         viewModelScope.launch {
             val bitmap = withContext(Dispatchers.IO) {
-                com.example.core.media.VideoThumbnailCache.getOrExtractFrame(context, uri, timeMs)
+                com.example.core.media.VideoThumbnailCache.getOrExtractFrame(
+                    context = context,
+                    uri = uri,
+                    timeMs = timeMs,
+                    targetWidth = 720,
+                    targetHeight = 720
+                )
             }
-            if (bitmap != null) {
+            if (bitmap != null && !bitmap.isRecycled) {
                 _extractedCoverFrame.value = bitmap
             }
         }
@@ -323,6 +420,11 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
 
         _isGenerating.value = true
         _generationResult.value = null
+        _exportProgressState.value = com.example.ui.components.ExportProgressUiState(
+            title = "正在导出实况照片",
+            stepDescription = "第 1/4 步：提取并编码高清实况封面帧...",
+            progressFraction = 0.15f
+        )
 
         viewModelScope.launch {
             try {
@@ -331,12 +433,16 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
 
                 val coverFile = File(dir, "${timestamp}_cover.jpg")
                 if (customCover != null) {
-                    withContext(Dispatchers.IO) {
-                        context.contentResolver.openInputStream(customCover)?.use { input ->
-                            coverFile.outputStream().use { output ->
-                                input.copyTo(output)
-                            }
+                    val rawCoverTemp = File(context.cacheDir, "raw_cover_${timestamp}.tmp")
+                    val converted = withContext(Dispatchers.IO) {
+                        try {
+                            com.example.core.media.ImageProcessor.ensureJpegCover(context, customCover, rawCoverTemp, coverFile)
+                        } finally {
+                            rawCoverTemp.delete()
                         }
+                    }
+                    if (!converted) {
+                        throw IllegalStateException("封面图片解析或转换失败")
                     }
                 } else {
                     val targetCoverTime = _coverTimeMs.value.coerceIn(start, end)
@@ -344,7 +450,7 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
                         MotionPhotoHelper.extractVideoFrame(context, videoUri, targetCoverTime)
                             ?: extractedFrame
                     }
-                    if (coverBmp != null) {
+                    if (coverBmp != null && !coverBmp.isRecycled) {
                         withContext(Dispatchers.IO) {
                             FileOutputStream(coverFile).use { out ->
                                 coverBmp.compress(Bitmap.CompressFormat.JPEG, 92, out)
@@ -355,6 +461,12 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                 }
 
+                _exportProgressState.value = com.example.ui.components.ExportProgressUiState(
+                    title = "正在导出实况照片",
+                    stepDescription = "第 2/4 步：裁剪视频流并执行音画时间戳对齐校验...",
+                    progressFraction = 0.48f
+                )
+
                 val videoFile = File(dir, "${timestamp}_video.mp4")
                 val trimmedSuccess = withContext(Dispatchers.IO) {
                     MotionPhotoHelper.trimVideo(context, videoUri, videoFile, start, end)
@@ -363,6 +475,12 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
                 if (!trimmedSuccess) {
                     throw IllegalStateException("视频片段截取失败")
                 }
+
+                _exportProgressState.value = com.example.ui.components.ExportProgressUiState(
+                    title = "正在导出实况照片",
+                    stepDescription = "第 3/4 步：注入 XMP 实况协议并执行容器自检...",
+                    progressFraction = 0.78f
+                )
 
                 val combinedFile = File(dir, "${timestamp}_motion.jpg")
                 val coverTime = _coverTimeMs.value
@@ -381,6 +499,18 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
                         durationMs = clipDurationMs
                     )
                 }
+
+                if (packaged && combinedFile.exists()) {
+                    withContext(Dispatchers.IO) {
+                        com.example.util.DebugLogManager.inspectAndLogLivePhotoContainer("ConvertExport", combinedFile)
+                    }
+                }
+
+                _exportProgressState.value = com.example.ui.components.ExportProgressUiState(
+                    title = "正在导出实况照片",
+                    stepDescription = "第 4/4 步：写入本地数据库与系统相册 Pictures/LivePhotos...",
+                    progressFraction = 0.94f
+                )
 
                 val resolvedTitle = title.ifBlank { _defaultTitle.value.ifBlank { "LivePhoto_$timestamp" } }
 
@@ -417,6 +547,7 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
 
                 com.example.util.DebugLogManager.interaction("ConvertScreen", "Generated LivePhoto: $resolvedTitle, duration=${end - start}ms, packaged=$packaged")
 
+                _exportProgressState.value = null
                 _isGenerating.value = false
                 _generationResult.value = "生成实况照片成功！"
                 withContext(Dispatchers.Main) {
@@ -427,6 +558,7 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
                 _extractedCoverFrame.value = null
             } catch (e: Exception) {
                 Log.e(TAG, "Error generating live photo", e)
+                _exportProgressState.value = null
                 _isGenerating.value = false
                 _generationResult.value = "生成失败: ${e.localizedMessage ?: "未知错误"}"
             }
@@ -522,31 +654,45 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
 
                 val coverFile = File(dir, "${timestamp}_cover.jpg")
                 val videoFile = File(dir, "${timestamp}_video.mp4")
+                val rawCoverTemp = File(context.cacheDir, "pair_cover_${timestamp}.tmp")
+                val rawVideoTemp = File(context.cacheDir, "pair_video_${timestamp}.tmp")
 
                 withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(coverUri)?.use { input ->
-                        coverFile.outputStream().use { output ->
-                            input.copyTo(output)
+                    try {
+                        com.example.core.media.ImageProcessor.ensureJpegCover(context, coverUri, rawCoverTemp, coverFile)
+                        context.contentResolver.openInputStream(videoUri)?.use { input ->
+                            rawVideoTemp.outputStream().buffered(64 * 1024).use { output ->
+                                input.copyTo(output, 64 * 1024)
+                            }
                         }
-                    }
-                }
-
-                withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(videoUri)?.use { input ->
-                        videoFile.outputStream().use { output ->
-                            input.copyTo(output)
+                        val remuxOk = com.example.core.media.VideoProcessor.trimVideo(
+                            context = context,
+                            inputUri = Uri.fromFile(rawVideoTemp),
+                            outputFile = videoFile,
+                            startMs = 0L,
+                            endMs = 0L,
+                            includeAudio = true
+                        )
+                        if (!remuxOk || !videoFile.exists() || videoFile.length() == 0L) {
+                            rawVideoTemp.copyTo(videoFile, overwrite = true)
                         }
+                    } finally {
+                        rawCoverTemp.delete()
+                        rawVideoTemp.delete()
                     }
                 }
 
                 val combinedFile = File(dir, "${timestamp}_motion.jpg")
                 val currentBrandMode = _brandMode.value
+                val presentationUs = withContext(Dispatchers.IO) {
+                    com.example.core.protocol.AppleLivePhotoArchiveHelper.extractApplePresentationTimeUs(videoFile)
+                }
                 val packaged = withContext(Dispatchers.IO) {
                     MotionPhotoHelper.packageLivePhoto(
                         coverFile = coverFile,
                         videoFile = videoFile,
                         outputFile = combinedFile,
-                        presentationTimestampUs = 0L,
+                        presentationTimestampUs = presentationUs,
                         brandMode = currentBrandMode
                     )
                 }
@@ -710,6 +856,11 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
 
         _isGenerating.value = true
         _generationResult.value = null
+        _exportProgressState.value = com.example.ui.components.ExportProgressUiState(
+            title = "正在多图合成实况",
+            stepDescription = "第 1/4 步：准备并转换 ${imageUris.size} 张序列帧图片...",
+            progressFraction = 0.20f
+        )
 
         viewModelScope.launch {
             try {
@@ -717,11 +868,12 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
                 val dir = File(context.filesDir, "live_photos").apply { mkdirs() }
 
                 val coverFile = File(dir, "${timestamp}_cover.jpg")
+                val rawFirstTemp = File(context.cacheDir, "multi_first_${timestamp}.tmp")
                 withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(imageUris.first())?.use { input ->
-                        coverFile.outputStream().use { output ->
-                            input.copyTo(output)
-                        }
+                    try {
+                        com.example.core.media.ImageProcessor.ensureJpegCover(context, imageUris.first(), rawFirstTemp, coverFile)
+                    } finally {
+                        rawFirstTemp.delete()
                     }
                 }
 
@@ -730,14 +882,21 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
                 val localImageUris = withContext(Dispatchers.IO) {
                     imageUris.mapIndexed { index, uri ->
                         val localFile = File(dir, "temp_img_${timestamp}_${index}.jpg")
-                        context.contentResolver.openInputStream(uri)?.use { input ->
-                            localFile.outputStream().use { output ->
-                                input.copyTo(output)
-                            }
+                        val rawTemp = File(context.cacheDir, "temp_raw_${timestamp}_${index}.tmp")
+                        try {
+                            com.example.core.media.ImageProcessor.ensureJpegCover(context, uri, rawTemp, localFile)
+                        } finally {
+                            rawTemp.delete()
                         }
                         Uri.fromFile(localFile)
                     }
                 }
+
+                _exportProgressState.value = com.example.ui.components.ExportProgressUiState(
+                    title = "正在多图合成实况",
+                    stepDescription = "第 2/4 步：编码 H.264 动态视频流...",
+                    progressFraction = 0.55f
+                )
 
                 val encodeSuccess = MotionPhotoHelper.encodeImagesToVideo(context, localImageUris, videoFile)
 
@@ -751,10 +910,35 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
                     throw IllegalStateException("多图合成视频失败")
                 }
 
+                _exportProgressState.value = com.example.ui.components.ExportProgressUiState(
+                    title = "正在多图合成实况",
+                    stepDescription = "第 3/4 步：注入 XMP 实况容器协议...",
+                    progressFraction = 0.82f
+                )
+
                 val combinedFile = File(dir, "${timestamp}_motion.jpg")
+                val currentBrandMode = _brandMode.value
                 val packaged = withContext(Dispatchers.IO) {
-                    MotionPhotoHelper.packageMotionPhoto(coverFile, videoFile, combinedFile)
+                    MotionPhotoHelper.packageLivePhoto(
+                        coverFile = coverFile,
+                        videoFile = videoFile,
+                        outputFile = combinedFile,
+                        presentationTimestampUs = 0L,
+                        brandMode = currentBrandMode
+                    )
                 }
+
+                if (packaged && combinedFile.exists()) {
+                    withContext(Dispatchers.IO) {
+                        com.example.util.DebugLogManager.inspectAndLogLivePhotoContainer("MultiImageSynth", combinedFile)
+                    }
+                }
+
+                _exportProgressState.value = com.example.ui.components.ExportProgressUiState(
+                    title = "正在多图合成实况",
+                    stepDescription = "第 4/4 步：写入系统相册 Pictures/LivePhotos...",
+                    progressFraction = 0.95f
+                )
 
                 val resolvedTitle = title.ifBlank { queryFileName(context, imageUris.firstOrNull()).ifBlank { "LivePhoto_$timestamp" } }
                 val record = LivePhotoRecord(
@@ -790,31 +974,363 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                 }
 
+                _exportProgressState.value = null
                 _isGenerating.value = false
                 _generationResult.value = "多图合成实况成功！"
             } catch (e: Exception) {
                 Log.e("LivePhotoVM", "Error generating from multiple images", e)
+                _exportProgressState.value = null
                 _isGenerating.value = false
                 _generationResult.value = "生成失败: ${e.localizedMessage ?: "未知错误"}"
             }
         }
     }
 
+    data class CacheStats(
+        val thumbBytes: Long = 0L,
+        val tempMediaBytes: Long = 0L,
+        val archiveAndOrphanBytes: Long = 0L
+    ) {
+        val totalBytes: Long get() = thumbBytes + tempMediaBytes + archiveAndOrphanBytes
+    }
+
+    private val _cacheStats = MutableStateFlow(CacheStats())
+    val cacheStats = _cacheStats.asStateFlow()
+
+    private val _isArchiveWindowOpen = MutableStateFlow(false)
+    val isArchiveWindowOpen = _isArchiveWindowOpen.asStateFlow()
+
+    private val _archiveScanResult = MutableStateFlow<com.example.core.protocol.AppleLivePhotoArchiveHelper.ArchiveScanResult?>(null)
+    val archiveScanResult = _archiveScanResult.asStateFlow()
+
+    private val _isScanningArchive = MutableStateFlow(false)
+    val isScanningArchive = _isScanningArchive.asStateFlow()
+
+    private val _archiveScanProgress = MutableStateFlow<com.example.core.protocol.AppleLivePhotoArchiveHelper.ArchiveScanProgress?>(null)
+    val archiveScanProgress = _archiveScanProgress.asStateFlow()
+
+    private var archiveScanJob: kotlinx.coroutines.Job? = null
+
+    private val _isBatchImporting = MutableStateFlow(false)
+    val isBatchImporting = _isBatchImporting.asStateFlow()
+
+    private val _batchProgress = MutableStateFlow<com.example.core.protocol.AppleLivePhotoArchiveHelper.SynthesisProgress?>(null)
+    val batchProgress = _batchProgress.asStateFlow()
+
+    private val _activeBatchPairs = MutableStateFlow<List<com.example.core.protocol.AppleLivePhotoArchiveHelper.ArchivePairItem>>(emptyList())
+    val activeBatchPairs = _activeBatchPairs.asStateFlow()
+
+    private val _archiveItemStatuses = MutableStateFlow<Map<String, Int>>(emptyMap())
+    val archiveItemStatuses = _archiveItemStatuses.asStateFlow()
+
+    private val _completedArchiveRecords = MutableStateFlow<List<LivePhotoRecord>>(emptyList())
+    val completedArchiveRecords = _completedArchiveRecords.asStateFlow()
+
+    private val _isArchiveImportFinished = MutableStateFlow(false)
+    val isArchiveImportFinished = _isArchiveImportFinished.asStateFlow()
+
+    private var batchImportJob: kotlinx.coroutines.Job? = null
+
+    fun closeArchiveWindow() {
+        archiveScanJob?.cancel()
+        batchImportJob?.cancel()
+        com.example.core.protocol.AppleLivePhotoArchiveHelper.closeArchiveSession()
+        _isScanningArchive.value = false
+        _archiveScanProgress.value = null
+        _isBatchImporting.value = false
+        _batchProgress.value = null
+        _archiveScanResult.value = null
+        _activeBatchPairs.value = emptyList()
+        _archiveItemStatuses.value = emptyMap()
+        _completedArchiveRecords.value = emptyList()
+        _isArchiveImportFinished.value = false
+        _isArchiveWindowOpen.value = false
+    }
+
+    fun dismissArchiveScan() {
+        closeArchiveWindow()
+    }
+
+    fun cancelArchiveScan() {
+        archiveScanJob?.cancel()
+        com.example.core.protocol.AppleLivePhotoArchiveHelper.closeArchiveSession()
+        _isScanningArchive.value = false
+        _archiveScanProgress.value = null
+        _isArchiveWindowOpen.value = false
+    }
+
+    fun scanArchiveForImport(context: Context, uri: Uri) {
+        archiveScanJob?.cancel()
+        batchImportJob?.cancel()
+        val archiveName = queryFileName(context, uri).ifBlank { "LiveArchive" }
+        _archiveScanResult.value = null
+        _activeBatchPairs.value = emptyList()
+        _archiveItemStatuses.value = emptyMap()
+        _completedArchiveRecords.value = emptyList()
+        _isArchiveImportFinished.value = false
+        _isBatchImporting.value = false
+        _batchProgress.value = null
+        _isScanningArchive.value = true
+        _isArchiveWindowOpen.value = true
+        _archiveScanProgress.value = com.example.core.protocol.AppleLivePhotoArchiveHelper.ArchiveScanProgress(
+            scannedCount = 0,
+            totalCount = 1,
+            currentEntryName = archiveName,
+            fraction = 0.04f
+        )
+
+        archiveScanJob = viewModelScope.launch {
+            try {
+                val result = com.example.core.protocol.AppleLivePhotoArchiveHelper.scanArchive(
+                    context = context,
+                    uri = uri,
+                    archiveDisplayName = archiveName,
+                    onProgress = { prog ->
+                        _archiveScanProgress.value = prog
+                    }
+                )
+                if (result.pairs.isNotEmpty()) {
+                    _archiveScanResult.value = result
+                } else {
+                    _isArchiveWindowOpen.value = false
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            context,
+                            result.errorMessage ?: "未在压缩包中找到支持的实况图片或视频文件",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            } catch (_: kotlinx.coroutines.CancellationException) {
+            } finally {
+                _isScanningArchive.value = false
+                _archiveScanProgress.value = null
+                archiveScanJob = null
+            }
+        }
+    }
+
+    fun startSingleApplePairMerge(
+        context: Context,
+        imageUri: Uri,
+        videoUri: Uri,
+        customTitle: String
+    ) {
+        _isBatchImporting.value = true
+        val initialTitle = customTitle.ifBlank { queryFileName(context, imageUri).ifBlank { "AppleLive" } }
+        _batchProgress.value = com.example.core.protocol.AppleLivePhotoArchiveHelper.SynthesisProgress(
+            currentIndex = 1,
+            totalCount = 1,
+            currentName = initialTitle,
+            stepIndex = 1,
+            overallFraction = 0.05f
+        )
+
+        batchImportJob = viewModelScope.launch {
+            try {
+                val record = com.example.core.protocol.AppleLivePhotoArchiveHelper.synthesizeSingleApplePair(
+                    context = context,
+                    imageUri = imageUri,
+                    videoUri = videoUri,
+                    customTitle = initialTitle,
+                    brandMode = _brandMode.value,
+                    onProgress = { prog ->
+                        _batchProgress.value = prog
+                    }
+                )
+                if (record != null) {
+                    livePhotoDao.insertLivePhoto(record)
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "OK: ${record.title}", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "Error", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (_: kotlinx.coroutines.CancellationException) {
+            } catch (e: Exception) {
+                Log.e(TAG, "Single Apple pair merge error", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "Error: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                }
+            } finally {
+                _isBatchImporting.value = false
+                _batchProgress.value = null
+                batchImportJob = null
+                refreshCacheStats(context)
+            }
+        }
+    }
+
+    fun startArchiveBatchImport(
+        context: Context,
+        archiveUri: Uri,
+        selectedPairs: List<com.example.core.protocol.AppleLivePhotoArchiveHelper.ArchivePairItem>
+    ) {
+        if (selectedPairs.isEmpty()) return
+        _isArchiveWindowOpen.value = true
+        _isArchiveImportFinished.value = false
+        _completedArchiveRecords.value = emptyList()
+        _activeBatchPairs.value = selectedPairs
+        _archiveItemStatuses.value = selectedPairs.associate { it.id to 0 }
+        _isBatchImporting.value = true
+        _batchProgress.value = com.example.core.protocol.AppleLivePhotoArchiveHelper.SynthesisProgress(
+            currentIndex = 1,
+            totalCount = selectedPairs.size,
+            currentName = selectedPairs.first().baseName,
+            stepIndex = 1,
+            overallFraction = 0.02f,
+            currentItemId = selectedPairs.first().id
+        )
+
+        batchImportJob = viewModelScope.launch {
+            try {
+                val createdList = mutableListOf<LivePhotoRecord>()
+                val count = com.example.core.protocol.AppleLivePhotoArchiveHelper.processArchivePairs(
+                    context = context,
+                    archiveUri = archiveUri,
+                    selectedPairs = selectedPairs,
+                    brandMode = _brandMode.value,
+                    onProgress = { prog ->
+                        _batchProgress.value = prog
+                    },
+                    onItemStatusChanged = { itemId, status ->
+                        val updated = HashMap(_archiveItemStatuses.value)
+                        updated[itemId] = status
+                        _archiveItemStatuses.value = updated
+                    },
+                    onRecordCreated = { record ->
+                        livePhotoDao.insertLivePhoto(record)
+                        createdList.add(record)
+                        _completedArchiveRecords.value = createdList.toList()
+                    }
+                )
+                _batchProgress.value = com.example.core.protocol.AppleLivePhotoArchiveHelper.SynthesisProgress(
+                    currentIndex = selectedPairs.size,
+                    totalCount = selectedPairs.size,
+                    currentName = selectedPairs.last().baseName,
+                    stepIndex = 4,
+                    overallFraction = 1.0f,
+                    currentItemId = selectedPairs.last().id
+                )
+                _isArchiveImportFinished.value = true
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "已完成 ($count / ${selectedPairs.size})", Toast.LENGTH_SHORT).show()
+                }
+            } catch (_: kotlinx.coroutines.CancellationException) {
+            } catch (e: Exception) {
+                Log.e(TAG, "Batch archive import error", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "Error: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                }
+            } finally {
+                _isBatchImporting.value = false
+                batchImportJob = null
+                refreshCacheStats(context)
+            }
+        }
+    }
+
+    fun cancelArchiveBatchImport() {
+        batchImportJob?.cancel()
+        _isBatchImporting.value = false
+        _isArchiveImportFinished.value = true
+    }
+
+    private fun computeDirSize(file: File?): Long {
+        if (file == null || !file.exists()) return 0L
+        if (file.isFile) return file.length()
+        var sum = 0L
+        file.listFiles()?.forEach { child ->
+            sum += computeDirSize(child)
+        }
+        return sum
+    }
+
+    fun refreshCacheStats(context: Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                var thumbBytes = com.example.core.media.VideoThumbnailCache.getMemorySizeBytes()
+                var tempMediaBytes = 0L
+                var archiveAndOrphanBytes = 0L
+
+                val cacheFiles = context.cacheDir.listFiles().orEmpty()
+                for (f in cacheFiles) {
+                    val name = f.name.lowercase()
+                    val size = computeDirSize(f)
+                    when {
+                        name.contains("thumb") || name.contains("image_cache") -> thumbBytes += size
+                        name.startsWith("temp_play") || name.startsWith("trimmed_") || name.startsWith("temp_src_") || name.endsWith(".mp4") -> tempMediaBytes += size
+                        else -> archiveAndOrphanBytes += size
+                    }
+                }
+                archiveAndOrphanBytes += computeDirSize(context.externalCacheDir)
+
+                // Check orphaned files in filesDir/live_photos not referenced by Room DB
+                val referencedPaths = HashSet<String>()
+                allLivePhotos.value.forEach { r ->
+                    if (r.coverPath.isNotEmpty()) referencedPaths.add(File(r.coverPath).canonicalPath)
+                    if (r.videoPath.isNotEmpty()) referencedPaths.add(File(r.videoPath).canonicalPath)
+                }
+                val liveDir = File(context.filesDir, "live_photos")
+                if (liveDir.exists() && referencedPaths.isNotEmpty()) {
+                    liveDir.listFiles()?.forEach { f ->
+                        if (f.isFile && !referencedPaths.contains(f.canonicalPath)) {
+                            archiveAndOrphanBytes += f.length()
+                        }
+                    }
+                }
+
+                _cacheStats.value = CacheStats(
+                    thumbBytes = thumbBytes,
+                    tempMediaBytes = tempMediaBytes,
+                    archiveAndOrphanBytes = archiveAndOrphanBytes
+                )
+            } catch (_: Exception) {}
+        }
+    }
+
     fun clearTempCache(context: Context, onResult: (String) -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                var deletedBytes = 0L
+                var deletedBytes = com.example.core.media.VideoThumbnailCache.getMemorySizeBytes()
+                com.example.core.media.VideoThumbnailCache.clear()
+
                 context.cacheDir.listFiles()?.forEach { file ->
-                    deletedBytes += file.length()
+                    deletedBytes += computeDirSize(file)
                     file.deleteRecursively()
                 }
-                val mb = "%.2f".format(deletedBytes / (1024f * 1024f))
+                context.externalCacheDir?.listFiles()?.forEach { file ->
+                    deletedBytes += computeDirSize(file)
+                    file.deleteRecursively()
+                }
+
+                // Clean up orphaned files in filesDir/live_photos
+                val referencedPaths = HashSet<String>()
+                allLivePhotos.value.forEach { r ->
+                    if (r.coverPath.isNotEmpty()) referencedPaths.add(File(r.coverPath).canonicalPath)
+                    if (r.videoPath.isNotEmpty()) referencedPaths.add(File(r.videoPath).canonicalPath)
+                }
+                val liveDir = File(context.filesDir, "live_photos")
+                if (liveDir.exists() && referencedPaths.isNotEmpty()) {
+                    liveDir.listFiles()?.forEach { f ->
+                        if (f.isFile && !referencedPaths.contains(f.canonicalPath)) {
+                            deletedBytes += f.length()
+                            f.delete()
+                        }
+                    }
+                }
+
+                _cacheStats.value = CacheStats(0L, 0L, 0L)
+                val mb = "%.2f MB".format(deletedBytes / (1024f * 1024f))
+                val msg = context.getString(com.example.R.string.cache_cleaned_format, mb)
                 withContext(Dispatchers.Main) {
-                    onResult("已成功清理 ${mb} MB 缓存空间")
+                    onResult(msg)
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    onResult("清理缓存失败: ${e.message}")
+                    onResult("Error: ${e.message}")
                 }
             }
         }

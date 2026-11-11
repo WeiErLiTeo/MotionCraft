@@ -97,17 +97,34 @@ private fun restartApp(context: Context) {
 }
 
 @Composable
-fun SettingsScreen(viewModel: LivePhotoViewModel, onOpenXmpTool: () -> Unit = {}) {
+fun SettingsScreen(
+    viewModel: LivePhotoViewModel,
+    onOpenXmpTool: () -> Unit = {},
+    onOpenAppleHub: () -> Unit = {}
+) {
     val context = LocalContext.current
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val dynamicColor by viewModel.dynamicColor.collectAsStateWithLifecycle()
     val themeColor by viewModel.themeColor.collectAsStateWithLifecycle()
     val language by viewModel.language.collectAsStateWithLifecycle()
     val autoPlay by viewModel.autoPlayLivePhoto.collectAsStateWithLifecycle()
+    val cacheStats by viewModel.cacheStats.collectAsStateWithLifecycle()
     var showDebugSheet by remember { mutableStateOf(false) }
     val isDebugMode by DebugLogManager.isDebugMode.collectAsStateWithLifecycle()
     val isFloatingVisible by DebugLogManager.isFloatingWindowVisible.collectAsStateWithLifecycle()
     val logs by DebugLogManager.logs.collectAsStateWithLifecycle()
+
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        viewModel.refreshCacheStats(context)
+    }
+
+    val formatSize: (Long) -> String = { bytes ->
+        when {
+            bytes >= 1024L * 1024L -> "%.2f MB".format(bytes / (1024f * 1024f))
+            bytes >= 1024L -> "%.1f KB".format(bytes / 1024f)
+            else -> "$bytes B"
+        }
+    }
 
     val chipColors = FilterChipDefaults.filterChipColors(
         selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -267,6 +284,8 @@ fun SettingsScreen(viewModel: LivePhotoViewModel, onOpenXmpTool: () -> Unit = {}
         Spacer(modifier = Modifier.height(16.dp))
 
         val brandMode by viewModel.brandMode.collectAsStateWithLifecycle()
+        val playerDecoderMode by viewModel.playerDecoderMode.collectAsStateWithLifecycle()
+        val videoTranscodeMode by viewModel.videoTranscodeMode.collectAsStateWithLifecycle()
         Card(
             modifier = Modifier.animateContentSize().fillMaxWidth(),
             shape = RoundedCornerShape(24.dp),
@@ -286,13 +305,108 @@ fun SettingsScreen(viewModel: LivePhotoViewModel, onOpenXmpTool: () -> Unit = {}
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     LivePhotoBrandMode.entries.forEach { mode ->
+                        val labelText = when (mode) {
+                            LivePhotoBrandMode.FUSION -> stringResource(R.string.protocol_fusion)
+                            LivePhotoBrandMode.OPPO -> stringResource(R.string.protocol_oppo)
+                            LivePhotoBrandMode.XIAOMI -> stringResource(R.string.protocol_xiaomi)
+                            LivePhotoBrandMode.SAMSUNG -> stringResource(R.string.protocol_samsung)
+                            LivePhotoBrandMode.VIVO -> stringResource(R.string.protocol_vivo)
+                            LivePhotoBrandMode.GOOGLE -> stringResource(R.string.protocol_google)
+                        }
                         FilterChip(
                             selected = brandMode == mode,
                             onClick = {
                                 DebugLogManager.interaction("SettingsScreen", "Switch BrandMode to: ${mode.name}")
                                 viewModel.setBrandMode(mode)
                             },
-                            label = { Text(mode.displayName) },
+                            label = { Text(labelText) },
+                            colors = chipColors
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Card(
+            modifier = Modifier.animateContentSize().fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        stringResource(R.string.decoder_engine_title),
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    stringResource(R.string.decoder_engine_desc),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+                Text(
+                    stringResource(R.string.decoder_kernel_label),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val decoderOptions = listOf(
+                        0 to stringResource(R.string.decoder_opt_hw_fallback),
+                        1 to stringResource(R.string.decoder_opt_sw_prefer),
+                        2 to stringResource(R.string.decoder_opt_native_mediaplayer)
+                    )
+                    decoderOptions.forEach { (modeId, label) ->
+                        FilterChip(
+                            selected = playerDecoderMode == modeId,
+                            onClick = {
+                                DebugLogManager.interaction("SettingsScreen", "Switch PlayerDecoderMode to: $modeId")
+                                viewModel.setPlayerDecoderMode(modeId)
+                            },
+                            label = { Text(label) },
+                            colors = chipColors
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+                Text(
+                    stringResource(R.string.transcode_strategy_label),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val transcodeOptions = listOf(
+                        "remux" to stringResource(R.string.transcode_opt_remux),
+                        "encode" to stringResource(R.string.transcode_opt_encode),
+                        "off" to stringResource(R.string.transcode_opt_off)
+                    )
+                    transcodeOptions.forEach { (modeKey, label) ->
+                        FilterChip(
+                            selected = videoTranscodeMode == modeKey,
+                            onClick = {
+                                DebugLogManager.interaction("SettingsScreen", "Switch VideoTranscodeMode to: $modeKey")
+                                viewModel.setVideoTranscodeMode(modeKey)
+                            },
+                            label = { Text(label) },
                             colors = chipColors
                         )
                     }
@@ -368,13 +482,13 @@ fun SettingsScreen(viewModel: LivePhotoViewModel, onOpenXmpTool: () -> Unit = {}
                         colors = chipColors
                     )
                     FilterChip(
-                        selected = language == "ja",
+                        selected = language == "ru",
                         onClick = {
-                            DebugLogManager.interaction("SettingsScreen", "Switch Language to: ja")
-                            viewModel.setLanguage("ja")
+                            DebugLogManager.interaction("SettingsScreen", "Switch Language to: ru")
+                            viewModel.setLanguage("ru")
                             restartApp(context)
                         },
-                        label = { Text("日本語") },
+                        label = { Text("Русский") },
                         colors = chipColors
                     )
                     FilterChip(
@@ -397,6 +511,126 @@ fun SettingsScreen(viewModel: LivePhotoViewModel, onOpenXmpTool: () -> Unit = {}
                         label = { Text("繁體中文") },
                         colors = chipColors
                     )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Card(
+            modifier = Modifier.animateContentSize().fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        stringResource(R.string.apple_hub_title),
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    stringResource(R.string.apple_hub_desc),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    onClick = {
+                        DebugLogManager.interaction("SettingsScreen", "Open Apple Live Photo Hub")
+                        onOpenAppleHub()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.Share, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(stringResource(R.string.btn_open_apple_hub), fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Card(
+            modifier = Modifier.animateContentSize().fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.DeleteSweep, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            stringResource(R.string.storage_cache_management),
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    TextButton(onClick = { viewModel.refreshCacheStats(context) }) {
+                        Text(stringResource(R.string.btn_refresh_cache), fontSize = 12.sp)
+                    }
+                }
+                Text(
+                    stringResource(R.string.clean_temp_cache_desc),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = stringResource(R.string.cache_total_used, formatSize(cacheStats.totalBytes)),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = stringResource(R.string.cache_detail_thumbs, formatSize(cacheStats.thumbBytes)),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = stringResource(R.string.cache_detail_temp_media, formatSize(cacheStats.tempMediaBytes)),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = stringResource(R.string.cache_detail_archive_orphan, formatSize(cacheStats.archiveAndOrphanBytes)),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = {
+                        DebugLogManager.interaction("SettingsScreen", "Clean Temp Cache")
+                        viewModel.clearTempCache(context) { msg ->
+                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.DeleteSweep, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(stringResource(R.string.btn_clean_cache))
                 }
             }
         }
@@ -559,7 +793,7 @@ fun SettingsScreen(viewModel: LivePhotoViewModel, onOpenXmpTool: () -> Unit = {}
                     Text(stringResource(R.string.about_platform_support), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
                 }
                 Spacer(modifier = Modifier.height(8.dp))
-                Text(stringResource(R.string.version_format), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.version_format, com.example.BuildConfig.VERSION_NAME), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
 
