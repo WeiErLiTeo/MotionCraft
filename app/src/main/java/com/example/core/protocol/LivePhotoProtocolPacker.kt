@@ -211,6 +211,13 @@ object LivePhotoProtocolPacker {
             return jpegBytes
         }
 
+        val cleanJpegBytes = try {
+            val noXmp = com.example.core.zlc.ZlcJpegUtil.stripXmpApp1(jpegBytes)
+            com.example.core.zlc.ZlcJpegUtil.stripMpfApp2(noXmp)
+        } catch (_: Exception) {
+            jpegBytes
+        }
+
         val xmpSegment = when (brandMode) {
             LivePhotoBrandMode.FUSION -> buildFusionXmp(videoLength, presentationTimestampUs)
             LivePhotoBrandMode.OPPO -> buildOppoXmp(videoLength, presentationTimestampUs)
@@ -221,21 +228,21 @@ object LivePhotoProtocolPacker {
         var pos = 2
         var hasExif = false
 
-        while (pos < jpegBytes.size - 1) {
-            if (jpegBytes[pos] != 0xFF.toByte()) break
+        while (pos < cleanJpegBytes.size - 1) {
+            if (cleanJpegBytes[pos] != 0xFF.toByte()) break
 
-            val marker = jpegBytes[pos + 1].toInt() and 0xFF
+            val marker = cleanJpegBytes[pos + 1].toInt() and 0xFF
             if (marker == 0xD9 || marker == 0xDA) break
 
-            if (pos + 3 >= jpegBytes.size) break
-            val length = ((jpegBytes[pos + 2].toInt() and 0xFF) shl 8) or (jpegBytes[pos + 3].toInt() and 0xFF)
+            if (pos + 3 >= cleanJpegBytes.size) break
+            val length = ((cleanJpegBytes[pos + 2].toInt() and 0xFF) shl 8) or (cleanJpegBytes[pos + 3].toInt() and 0xFF)
             val segmentEnd = pos + 2 + length
 
-            if (segmentEnd > jpegBytes.size) break
+            if (segmentEnd > cleanJpegBytes.size) break
 
             if (marker == 0xE1) {
-                if (pos + 10 <= jpegBytes.size) {
-                    val headerAscii = String(jpegBytes, pos + 4, 6, Charsets.US_ASCII)
+                if (pos + 10 <= cleanJpegBytes.size) {
+                    val headerAscii = String(cleanJpegBytes, pos + 4, 6, Charsets.US_ASCII)
                     if (headerAscii.startsWith("Exif")) {
                         hasExif = true
                     }
@@ -251,7 +258,7 @@ object LivePhotoProtocolPacker {
         }
 
         val mpfPlaceholderSize = 78
-        val totalJpegSize = jpegBytes.size + xmpSegment.size + fallbackExif.size + mpfPlaceholderSize
+        val totalJpegSize = cleanJpegBytes.size + xmpSegment.size + fallbackExif.size + mpfPlaceholderSize
         val mpfSegment = buildMpfSegment(totalJpegSize)
 
         val out = ByteArrayOutputStream(totalJpegSize)
@@ -262,7 +269,7 @@ object LivePhotoProtocolPacker {
         }
         out.write(xmpSegment)
         out.write(mpfSegment)
-        out.write(jpegBytes, 2, jpegBytes.size - 2)
+        out.write(cleanJpegBytes, 2, cleanJpegBytes.size - 2)
 
         return out.toByteArray()
     }
@@ -283,7 +290,10 @@ object LivePhotoProtocolPacker {
                 LivePhotoBrandMode.SAMSUNG -> {
                     val coverBytes = coverFile.readBytes()
                     val cacheDir = outputFile.parentFile ?: coverFile.parentFile ?: File(".")
-                    val cleanVideoBytes = ZlcMp4Util.sanitizeVideoTracksIfNeeded(videoFile.readBytes(), cacheDir)
+                    val cleanVideoBytes = ZlcMp4Util.removeBoxesFromMoov(
+                        ZlcMp4Util.sanitizeVideoTracksIfNeeded(videoFile.readBytes(), cacheDir),
+                        setOf("lpex")
+                    )
                     val packed = ZlcSamsungPlugin.pack(coverBytes, cleanVideoBytes)
                     outputFile.writeBytes(packed)
                     return outputFile.exists() && outputFile.length() > 0L
@@ -308,28 +318,40 @@ object LivePhotoProtocolPacker {
                     if (brandMode == LivePhotoBrandMode.OPPO || brandMode == LivePhotoBrandMode.FUSION) {
                         try {
                             val exif = ExifInterface(coverFile.absolutePath)
-                            exif.setAttribute(ExifInterface.TAG_USER_COMMENT, "{\"oplustag\":8388608}")
-                            exif.saveAttributes()
+                            val currentComment = exif.getAttribute(ExifInterface.TAG_USER_COMMENT)
+                            if (currentComment.isNullOrBlank()) {
+                                exif.setAttribute(ExifInterface.TAG_USER_COMMENT, "{\"oplustag\":8388608}")
+                                exif.saveAttributes()
+                            }
                         } catch (e: Exception) {
                             Log.w(TAG, "ExifInterface save error: ${e.message}")
                         }
                     }
 
                     val coverBytes = coverFile.readBytes()
-                    val videoLength = videoFile.length().toInt()
+                    val rawVideoBytes = videoFile.readBytes()
+                    val pureEnd = ZlcMp4Util.findPureMp4End(rawVideoBytes, 0)
+                    val trimmedVideo = if (pureEnd in 256 until rawVideoBytes.size) {
+                        rawVideoBytes.copyOfRange(0, pureEnd)
+                    } else {
+                        rawVideoBytes
+                    }
+                    val finalVideo = if (brandMode == LivePhotoBrandMode.XIAOMI) {
+                        ZlcMp4Util.removeBoxesFromMoov(ZlcMp4Util.stripVivoUuid(trimmedVideo), setOf("lpex"))
+                    } else {
+                        ZlcMp4Util.stripVivoUuid(trimmedVideo)
+                    }
 
                     val modifiedJpeg = injectLivePhotoMetadata(
                         jpegBytes = coverBytes,
-                        videoLength = videoLength,
+                        videoLength = finalVideo.size,
                         presentationTimestampUs = presentationTimestampUs,
                         brandMode = brandMode
                     )
 
                     outputFile.outputStream().buffered(64 * 1024).use { out ->
                         out.write(modifiedJpeg)
-                        videoFile.inputStream().buffered(64 * 1024).use { vIn ->
-                            vIn.copyTo(out, 64 * 1024)
-                        }
+                        out.write(finalVideo)
                         out.flush()
                     }
                     return true

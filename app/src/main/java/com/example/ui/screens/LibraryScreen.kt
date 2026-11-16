@@ -67,7 +67,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.data.LivePhotoRecord
+import com.example.ui.components.ExportProgressFloatingDialog
+import com.example.ui.components.InAppMediaPickerDialog
 import com.example.ui.components.LivePhotoCard
+import com.example.ui.components.MediaPickerType
 import com.example.viewmodel.LivePhotoViewModel
 
 @Composable
@@ -79,9 +82,10 @@ fun LibraryScreen(
 ) {
     val context = LocalContext.current
     val livePhotos by viewModel.allLivePhotos.collectAsStateWithLifecycle()
-    val archiveScanResult by viewModel.archiveScanResult.collectAsStateWithLifecycle()
-    val isBatchImporting by viewModel.isBatchImporting.collectAsStateWithLifecycle()
-    val batchProgress by viewModel.batchProgress.collectAsStateWithLifecycle()
+    val useBuiltInPicker by viewModel.useBuiltInFilePicker.collectAsStateWithLifecycle()
+    val exportProgressState by viewModel.exportProgressState.collectAsStateWithLifecycle()
+
+    ExportProgressFloatingDialog(state = exportProgressState)
 
     var isSelectionMode by remember { mutableStateOf(false) }
     var selectedRecords by remember { mutableStateOf<Set<Int>>(emptySet()) }
@@ -95,23 +99,30 @@ fun LibraryScreen(
     var showImportDialog by remember { mutableStateOf(false) }
     var importTitle by remember { mutableStateOf("") }
     var selectedImportUri by remember { mutableStateOf<Uri?>(null) }
+    var showInAppImagePicker by remember { mutableStateOf(false) }
 
-    val importPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri ->
-        if (uri != null) {
-            selectedImportUri = uri
-            showImportDialog = true
+    val handlePickedImportImages: (List<Uri>) -> Unit = { uris ->
+        when {
+            uris.size == 1 -> {
+                selectedImportUri = uris.first()
+                showImportDialog = true
+            }
+            uris.size > 1 -> {
+                viewModel.importMultipleMotionPhotos(context, uris)
+            }
         }
     }
 
+    val importPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia()
+    ) { uris ->
+        handlePickedImportImages(uris)
+    }
+
     val documentPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri != null) {
-            selectedImportUri = uri
-            showImportDialog = true
-        }
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        handlePickedImportImages(uris)
     }
 
     val archivePicker = rememberLauncherForActivityResult(
@@ -120,6 +131,21 @@ fun LibraryScreen(
         if (uri != null) {
             viewModel.scanArchiveForImport(context, uri)
         }
+    }
+
+    if (showInAppImagePicker) {
+        InAppMediaPickerDialog(
+            pickerType = MediaPickerType.IMAGE_ONLY,
+            allowMultiSelect = true,
+            onDismiss = { showInAppImagePicker = false },
+            onConfirm = { uris ->
+                showInAppImagePicker = false
+                handlePickedImportImages(uris)
+            },
+            onFallbackToSystemFiles = {
+                documentPicker.launch(arrayOf("image/*"))
+            }
+        )
     }
 
     var importMenuExpanded by remember { mutableStateOf(false) }
@@ -228,7 +254,11 @@ fun LibraryScreen(
                                     text = { Text(stringResource(R.string.import_from_gallery)) },
                                     onClick = {
                                         importMenuExpanded = false
-                                        importPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                        if (useBuiltInPicker) {
+                                            showInAppImagePicker = true
+                                        } else {
+                                            importPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                        }
                                     },
                                     leadingIcon = { Icon(Icons.Default.PhotoLibrary, contentDescription = null) }
                                 )

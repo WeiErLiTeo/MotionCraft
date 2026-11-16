@@ -61,10 +61,11 @@ import com.example.data.LivePhotoRecord
 import com.example.ui.components.DebugLogModalSheet
 import com.example.ui.components.FloatingDebugPill
 import com.example.ui.components.LivePhotoPlaybackOverlay
+import com.example.ui.screens.BrandConvertScreen
 import com.example.ui.screens.ConvertScreen
 import com.example.ui.screens.LibraryScreen
 import com.example.ui.screens.LivePhotoDetailScreen
-import com.example.ui.screens.ManualPairScreen
+import com.example.ui.screens.OnboardingScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.XmpToolScreen
 import com.example.util.DebugLogManager
@@ -78,16 +79,20 @@ fun LivePhotoApp(viewModel: LivePhotoViewModel) {
     var isXmpToolOpen by remember { mutableStateOf(false) }
     var isAppleHubOpen by remember { mutableStateOf(false) }
     var isDebugSheetOpen by remember { mutableStateOf(false) }
+    var showOnboardingFromSettings by remember { mutableStateOf(false) }
 
     val autoPlay by viewModel.autoPlayLivePhoto.collectAsStateWithLifecycle()
+    val hasCompletedOnboarding by viewModel.hasCompletedOnboarding.collectAsStateWithLifecycle()
     val isFloatingDebugVisible by DebugLogManager.isFloatingWindowVisible.collectAsStateWithLifecycle()
     val selectedVideoUri by viewModel.selectedVideoUri.collectAsStateWithLifecycle()
+    val batchVideoQueue by viewModel.batchVideoQueue.collectAsStateWithLifecycle()
     val isArchiveWindowOpen by viewModel.isArchiveWindowOpen.collectAsStateWithLifecycle()
-    val isTrimming = currentTab == 1 && selectedVideoUri != null
+    val isTrimming = currentTab == 1 && (selectedVideoUri != null || batchVideoQueue.isNotEmpty())
+    val showOnboardingOverlay = !hasCompletedOnboarding || showOnboardingFromSettings
     val context = LocalContext.current
 
     androidx.activity.compose.BackHandler(
-        enabled = currentTab != 0 && !isXmpToolOpen && !isAppleHubOpen && !isArchiveWindowOpen && activeRecordForDetail == null && activeRecordForPlayback == null && !isTrimming
+        enabled = currentTab != 0 && !showOnboardingOverlay && !isXmpToolOpen && !isAppleHubOpen && !isArchiveWindowOpen && activeRecordForDetail == null && activeRecordForPlayback == null && !isTrimming
     ) {
         DebugLogManager.interaction("Navigation", "Back gesture -> return to Library Tab")
         currentTab = 0
@@ -127,10 +132,10 @@ fun LivePhotoApp(viewModel: LivePhotoViewModel) {
                         )
                         ImmersiveNavItem(
                             icon = Icons.Default.SwapHoriz,
-                            label = stringResource(R.string.tab_manual_pair),
+                            label = stringResource(R.string.tab_brand_convert),
                             isSelected = currentTab == 2,
                             onClick = {
-                                DebugLogManager.interaction("Navigation", "Switch to Manual Pair Tab")
+                                DebugLogManager.interaction("Navigation", "Switch to Brand Convert Tab")
                                 currentTab = 2
                             }
                         )
@@ -170,12 +175,13 @@ fun LivePhotoApp(viewModel: LivePhotoViewModel) {
                             onOpenDetail = { record -> activeRecordForDetail = record }
                         )
                         1 -> Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) { ConvertScreen(viewModel) }
-                        2 -> Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) { ManualPairScreen(viewModel) }
+                        2 -> Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) { BrandConvertScreen(viewModel) }
                         3 -> Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
                             SettingsScreen(
                                 viewModel = viewModel,
                                 onOpenXmpTool = { isXmpToolOpen = true },
-                                onOpenAppleHub = { isAppleHubOpen = true }
+                                onOpenAppleHub = { isAppleHubOpen = true },
+                                onOpenOnboarding = { showOnboardingFromSettings = true }
                             )
                         }
                     }
@@ -281,6 +287,19 @@ fun LivePhotoApp(viewModel: LivePhotoViewModel) {
 
         if (isDebugSheetOpen) {
             DebugLogModalSheet(onDismissRequest = { isDebugSheetOpen = false })
+        }
+
+        AnimatedVisibility(
+            visible = showOnboardingOverlay,
+            enter = fadeIn(animationSpec = tween(220)),
+            exit = fadeOut(animationSpec = tween(220)),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            OnboardingScreen(
+                viewModel = viewModel,
+                allowBackDismiss = hasCompletedOnboarding && showOnboardingFromSettings,
+                onFinished = { showOnboardingFromSettings = false }
+            )
         }
     }
 }

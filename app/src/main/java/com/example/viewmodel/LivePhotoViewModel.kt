@@ -11,6 +11,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.core.protocol.LivePhotoBrandMode
 import com.example.data.AppDatabase
 import com.example.data.LivePhotoRecord
+import com.example.util.MediaPermissionHelper
 import com.example.util.MotionPhotoHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,6 +46,22 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
     fun setAutoPlayLivePhoto(enabled: Boolean) {
         sharedPrefs.edit().putBoolean("auto_play", enabled).apply()
         _autoPlayLivePhoto.value = enabled
+    }
+
+    private val _hasCompletedOnboarding = MutableStateFlow(sharedPrefs.getBoolean("onboarding_completed", false))
+    val hasCompletedOnboarding = _hasCompletedOnboarding.asStateFlow()
+
+    fun completeOnboarding() {
+        sharedPrefs.edit().putBoolean("onboarding_completed", true).apply()
+        _hasCompletedOnboarding.value = true
+    }
+
+    private val _useBuiltInFilePicker = MutableStateFlow(sharedPrefs.getBoolean("use_built_in_file_picker", true))
+    val useBuiltInFilePicker = _useBuiltInFilePicker.asStateFlow()
+
+    fun setUseBuiltInFilePicker(enabled: Boolean) {
+        sharedPrefs.edit().putBoolean("use_built_in_file_picker", enabled).apply()
+        _useBuiltInFilePicker.value = enabled
     }
 
     private val _language = MutableStateFlow(sharedPrefs.getString("language", "system") ?: "system")
@@ -565,12 +582,13 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun importMotionPhoto(context: Context, imageUri: Uri, title: String) {
+    fun importMotionPhoto(context: Context, rawUri: Uri, title: String) {
         _isGenerating.value = true
         _generationResult.value = null
 
         viewModelScope.launch {
             try {
+                val imageUri = MediaPermissionHelper.resolveOriginalUri(context, rawUri)
                 val timestamp = System.currentTimeMillis()
                 val dir = File(context.filesDir, "live_photos").apply { mkdirs() }
 
@@ -711,10 +729,29 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
                     livePhotoDao.insertLivePhoto(record)
                 }
 
-                com.example.util.DebugLogManager.interaction("ManualPairScreen", "Paired LivePhoto: $resolvedTitle, packaged=$packaged")
+                withContext(Dispatchers.IO) {
+                    val resolver = context.contentResolver
+                    val contentValues = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "$resolvedTitle.jpg")
+                        put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_PICTURES + "/LivePhotos")
+                    }
+                    val galleryUri = resolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+                    if (galleryUri != null) {
+                        resolver.openOutputStream(galleryUri)?.use { outStream ->
+                            val srcFile = if (packaged) combinedFile else coverFile
+                            srcFile.inputStream().use { input -> input.copyTo(outStream) }
+                        }
+                    }
+                }
+
+                com.example.util.DebugLogManager.interaction("ConvertScreen", "Paired LivePhoto: $resolvedTitle, packaged=$packaged")
 
                 _isGenerating.value = false
                 _generationResult.value = "实况配对并保存成功！"
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "已保存至库与系统相册", Toast.LENGTH_SHORT).show()
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Error pairing files", e)
                 _isGenerating.value = false
@@ -771,9 +808,10 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun injectCustomXmp(context: Context, imageUri: Uri, xmpString: String, onResult: (Boolean, String) -> Unit) {
+    fun injectCustomXmp(context: Context, rawImageUri: Uri, xmpString: String, onResult: (Boolean, String) -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                val imageUri = MediaPermissionHelper.resolveOriginalUri(context, rawImageUri)
                 val inputBytes = context.contentResolver.openInputStream(imageUri)?.use { it.readBytes() }
                 if (inputBytes == null) {
                     withContext(Dispatchers.Main) { onResult(false, "读取图片失败") }
@@ -1332,6 +1370,520 @@ class LivePhotoViewModel(application: Application) : AndroidViewModel(applicatio
                 withContext(Dispatchers.Main) {
                     onResult("Error: ${e.message}")
                 }
+            }
+        }
+    }
+
+    enum class BatchCoverMode {
+        FIRST_FRAME,
+        MIDDLE_FRAME
+    }
+
+    data class BatchVideoItem(
+        val uri: Uri,
+        val title: String,
+        val durationMs: Long = 0L,
+        val status: Int = 0 // 0=pending, 1=processing, 2=done, 3=failed
+    )
+
+    private val _batchVideoQueue = MutableStateFlow<List<BatchVideoItem>>(emptyList())
+    val batchVideoQueue = _batchVideoQueue.asStateFlow()
+
+    private val _isBatchConvertingVideos = MutableStateFlow(false)
+    val isBatchConvertingVideos = _isBatchConvertingVideos.asStateFlow()
+
+    private var batchVideoJob: kotlinx.coroutines.Job? = null
+
+    fun prepareBatchVideoQueue(context: Context, uris: List<Uri>, append: Boolean = false) {
+        if (uris.isEmpty()) return
+        selectVideoForTrim(context, null)
+        viewModelScope.launch {
+            val newItems = withContext(Dispatchers.IO) {
+                uris.map { rawUri ->
+                    val uri = MediaPermissionHelper.resolveOriginalUri(context, rawUri)
+                    val title = queryFileName(context, uri).ifBlank { "Video_${System.currentTimeMillis()}" }
+                    val dur = MotionPhotoHelper.getVideoDuration(context, uri)
+                    BatchVideoItem(uri = uri, title = title, durationMs = dur, status = 0)
+                }
+            }
+            val current = if (append) _batchVideoQueue.value else emptyList()
+            val merged = (current + newItems).distinctBy { it.uri.toString() }
+            _batchVideoQueue.value = merged
+            _generationResult.value = null
+        }
+    }
+
+    fun removeBatchVideoItem(uri: Uri) {
+        if (_isBatchConvertingVideos.value) return
+        _batchVideoQueue.value = _batchVideoQueue.value.filterNot { it.uri == uri }
+    }
+
+    fun clearBatchVideoQueue() {
+        batchVideoJob?.cancel()
+        _isBatchConvertingVideos.value = false
+        _exportProgressState.value = null
+        _batchVideoQueue.value = emptyList()
+        _generationResult.value = null
+    }
+
+    fun startBatchVideoToLivePhoto(
+        context: Context,
+        maxClipDurationMs: Long,
+        coverMode: BatchCoverMode
+    ) {
+        val queue = _batchVideoQueue.value
+        if (queue.isEmpty() || _isBatchConvertingVideos.value) return
+        _isBatchConvertingVideos.value = true
+        _generationResult.value = null
+
+        batchVideoJob = viewModelScope.launch {
+            var successCount = 0
+            val total = queue.size
+            val currentBrandMode = _brandMode.value
+            val dir = File(context.filesDir, "live_photos").apply { mkdirs() }
+
+            try {
+                for (index in queue.indices) {
+                    val item = _batchVideoQueue.value.getOrNull(index) ?: continue
+                    _batchVideoQueue.value = _batchVideoQueue.value.mapIndexed { i, it ->
+                        if (i == index) it.copy(status = 1) else it
+                    }
+                    _exportProgressState.value = com.example.ui.components.ExportProgressUiState(
+                        title = context.getString(com.example.R.string.batch_video_title),
+                        stepDescription = context.getString(com.example.R.string.batch_progress_status, index + 1, total, item.title),
+                        progressFraction = ((index.toFloat() + 0.35f) / total.toFloat()).coerceIn(0.05f, 0.98f)
+                    )
+
+                    val ok = withContext(Dispatchers.IO) {
+                        try {
+                            val timestamp = System.currentTimeMillis() + index
+                            val dur = if (item.durationMs > 0L) item.durationMs else MotionPhotoHelper.getVideoDuration(context, item.uri)
+                            val capMs = if (maxClipDurationMs <= 0L) 15000L else maxClipDurationMs
+                            val endMs = if (dur > 0L) minOf(dur, capMs) else minOf(3000L, capMs)
+                            val coverTimeMs = if (coverMode == BatchCoverMode.MIDDLE_FRAME) (endMs / 2L) else 0L
+
+                            val coverFile = File(dir, "${timestamp}_cover.jpg")
+                            val coverBmp = MotionPhotoHelper.extractVideoFrame(context, item.uri, coverTimeMs)
+                                ?: MotionPhotoHelper.extractVideoFrame(context, item.uri, 0L)
+                            if (coverBmp == null || coverBmp.isRecycled) {
+                                return@withContext false
+                            }
+                            FileOutputStream(coverFile).use { out ->
+                                coverBmp.compress(Bitmap.CompressFormat.JPEG, 92, out)
+                            }
+
+                            val videoFile = File(dir, "${timestamp}_video.mp4")
+                            val trimmed = MotionPhotoHelper.trimVideo(context, item.uri, videoFile, 0L, endMs)
+                            if (!trimmed || !videoFile.exists() || videoFile.length() == 0L) {
+                                return@withContext false
+                            }
+
+                            val combinedFile = File(dir, "${timestamp}_motion.jpg")
+                            val packaged = MotionPhotoHelper.packageLivePhoto(
+                                coverFile = coverFile,
+                                videoFile = videoFile,
+                                outputFile = combinedFile,
+                                presentationTimestampUs = coverTimeMs * 1000L,
+                                brandMode = currentBrandMode,
+                                coverMs = coverTimeMs.toInt(),
+                                durationMs = endMs.toInt()
+                            )
+
+                            val record = LivePhotoRecord(
+                                title = item.title,
+                                coverPath = if (packaged) combinedFile.absolutePath else coverFile.absolutePath,
+                                videoPath = videoFile.absolutePath,
+                                timestamp = timestamp,
+                                isEmbedded = packaged
+                            )
+                            livePhotoDao.insertLivePhoto(record)
+
+                            val resolver = context.contentResolver
+                            val contentValues = android.content.ContentValues().apply {
+                                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "${item.title}.jpg")
+                                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_PICTURES + "/LivePhotos")
+                            }
+                            val galleryUri = resolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+                            if (galleryUri != null) {
+                                resolver.openOutputStream(galleryUri)?.use { outStream ->
+                                    val srcFile = if (packaged) combinedFile else coverFile
+                                    srcFile.inputStream().use { input -> input.copyTo(outStream) }
+                                }
+                            }
+                            true
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Batch video item failed: ${item.title}", e)
+                            false
+                        }
+                    }
+
+                    if (ok) successCount++
+                    _batchVideoQueue.value = _batchVideoQueue.value.mapIndexed { i, it ->
+                        if (i == index) it.copy(status = if (ok) 2 else 3) else it
+                    }
+                }
+
+                val summary = context.getString(com.example.R.string.batch_finished_summary, successCount, total)
+                _generationResult.value = summary
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, summary, Toast.LENGTH_SHORT).show()
+                }
+            } catch (_: kotlinx.coroutines.CancellationException) {
+            } finally {
+                _exportProgressState.value = null
+                _isBatchConvertingVideos.value = false
+                batchVideoJob = null
+                refreshCacheStats(context)
+            }
+        }
+    }
+
+    fun importMultipleMotionPhotos(context: Context, uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        _isGenerating.value = true
+        _generationResult.value = null
+
+        viewModelScope.launch {
+            var motionCount = 0
+            var staticCount = 0
+            val total = uris.size
+            val dir = File(context.filesDir, "live_photos").apply { mkdirs() }
+
+            try {
+                for ((idx, rawUri) in uris.withIndex()) {
+                    val uri = MediaPermissionHelper.resolveOriginalUri(context, rawUri)
+                    val title = queryFileName(context, uri).ifBlank { "Photo_${System.currentTimeMillis()}_$idx" }
+                    _exportProgressState.value = com.example.ui.components.ExportProgressUiState(
+                        title = context.getString(com.example.R.string.btn_import),
+                        stepDescription = context.getString(com.example.R.string.batch_progress_status, idx + 1, total, title),
+                        progressFraction = ((idx + 0.5f) / total.toFloat()).coerceIn(0.05f, 0.98f)
+                    )
+
+                    withContext(Dispatchers.IO) {
+                        try {
+                            val timestamp = System.currentTimeMillis() + idx
+                            val isMotion = MotionPhotoHelper.isMotionPhoto(context, uri)
+                            val coverFile = File(dir, "${timestamp}_cover.jpg")
+                            val videoFile = File(dir, "${timestamp}_video.mp4")
+
+                            context.contentResolver.openInputStream(uri)?.use { input ->
+                                coverFile.outputStream().use { output -> input.copyTo(output) }
+                            }
+                            if (!coverFile.exists() || coverFile.length() == 0L) return@withContext
+
+                            val extracted = if (isMotion) {
+                                context.contentResolver.openInputStream(uri)?.use { input ->
+                                    MotionPhotoHelper.extractVideoFromMotionPhoto(input, videoFile)
+                                } ?: false
+                            } else {
+                                false
+                            }
+
+                            if (extracted) {
+                                val combinedFile = File(dir, "${timestamp}_motion.jpg")
+                                coverFile.copyTo(combinedFile, overwrite = true)
+                                livePhotoDao.insertLivePhoto(
+                                    LivePhotoRecord(
+                                        title = title,
+                                        coverPath = combinedFile.absolutePath,
+                                        videoPath = videoFile.absolutePath,
+                                        timestamp = timestamp,
+                                        isEmbedded = true
+                                    )
+                                )
+                                motionCount++
+                            } else {
+                                livePhotoDao.insertLivePhoto(
+                                    LivePhotoRecord(
+                                        title = title,
+                                        coverPath = coverFile.absolutePath,
+                                        videoPath = "",
+                                        timestamp = timestamp,
+                                        isEmbedded = false
+                                    )
+                                )
+                                staticCount++
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Batch import image failed: $uri", e)
+                        }
+                    }
+                }
+                val summary = context.getString(com.example.R.string.batch_finished_summary, motionCount + staticCount, total)
+                _generationResult.value = summary
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, summary, Toast.LENGTH_SHORT).show()
+                }
+            } finally {
+                _exportProgressState.value = null
+                _isGenerating.value = false
+            }
+        }
+    }
+
+    data class BrandConvertItem(
+        val key: String,
+        val uri: Uri,
+        val recordId: Int? = null,
+        val videoFallbackPath: String? = null,
+        val title: String,
+        val probe: com.example.core.protocol.MotionProbeResult,
+        val status: Int = 0, // 0=pending, 1=processing, 2=done, 3=failed
+        val outputCoverPath: String? = null,
+        val outputVideoPath: String? = null
+    )
+
+    private val _brandConvertQueue = MutableStateFlow<List<BrandConvertItem>>(emptyList())
+    val brandConvertQueue = _brandConvertQueue.asStateFlow()
+
+    private val _isBrandConverting = MutableStateFlow(false)
+    val isBrandConverting = _isBrandConverting.asStateFlow()
+
+    private val _brandConvertResult = MutableStateFlow<String?>(null)
+    val brandConvertResult = _brandConvertResult.asStateFlow()
+
+    private val _brandConvertSaveToLibrary = MutableStateFlow(true)
+    val brandConvertSaveToLibrary = _brandConvertSaveToLibrary.asStateFlow()
+
+    private var brandConvertJob: kotlinx.coroutines.Job? = null
+
+    fun setBrandConvertSaveToLibrary(enabled: Boolean) {
+        _brandConvertSaveToLibrary.value = enabled
+    }
+
+    fun prepareBrandConvertQueue(context: Context, uris: List<Uri>, append: Boolean = false) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch {
+            val newItems = withContext(Dispatchers.IO) {
+                uris.map { rawUri ->
+                    val uri = MediaPermissionHelper.resolveOriginalUri(context, rawUri)
+                    val title = queryFileName(context, uri).ifBlank { "LivePhoto_${System.currentTimeMillis()}" }
+                    val probe = com.example.core.protocol.LivePhotoDetector.probeFast(
+                        context = context,
+                        uri = uri,
+                        cacheKey = uri.toString()
+                    )
+                    BrandConvertItem(
+                        key = uri.toString(),
+                        uri = uri,
+                        title = title,
+                        probe = probe,
+                        status = 0
+                    )
+                }
+            }
+            val current = if (append) _brandConvertQueue.value else emptyList()
+            _brandConvertQueue.value = (current + newItems).distinctBy { it.key }
+            _brandConvertResult.value = null
+        }
+    }
+
+    fun addLibraryRecordsToBrandQueue(records: List<LivePhotoRecord>, append: Boolean = true) {
+        if (records.isEmpty()) return
+        viewModelScope.launch {
+            val newItems = withContext(Dispatchers.IO) {
+                records.map { rec ->
+                    val coverFile = File(rec.coverPath)
+                    val videoFile = File(rec.videoPath)
+                    val fileProbe = if (coverFile.exists()) {
+                        com.example.core.protocol.LivePhotoDetector.probeFile(coverFile)
+                    } else {
+                        com.example.core.protocol.MotionProbeResult(false, com.example.core.protocol.DetectedOemBrand.NONE)
+                    }
+                    val effectiveProbe = if (!fileProbe.isMotionPhoto && videoFile.exists() && videoFile.length() > 256L) {
+                        com.example.core.protocol.MotionProbeResult(
+                            isMotionPhoto = true,
+                            brand = com.example.core.protocol.DetectedOemBrand.GENERIC,
+                            presentationTimestampUs = 0L
+                        )
+                    } else {
+                        fileProbe
+                    }
+                    BrandConvertItem(
+                        key = "rec_${rec.id}",
+                        uri = Uri.fromFile(coverFile),
+                        recordId = rec.id,
+                        videoFallbackPath = rec.videoPath.takeIf { it.isNotBlank() },
+                        title = rec.title,
+                        probe = effectiveProbe,
+                        status = 0
+                    )
+                }
+            }
+            val current = if (append) _brandConvertQueue.value else emptyList()
+            _brandConvertQueue.value = (current + newItems).distinctBy { it.key }
+            _brandConvertResult.value = null
+        }
+    }
+
+    fun removeBrandConvertItem(key: String) {
+        if (_isBrandConverting.value) return
+        _brandConvertQueue.value = _brandConvertQueue.value.filterNot { it.key == key }
+    }
+
+    fun clearBrandConvertQueue() {
+        brandConvertJob?.cancel()
+        _isBrandConverting.value = false
+        _exportProgressState.value = null
+        _brandConvertQueue.value = emptyList()
+        _brandConvertResult.value = null
+    }
+
+    fun startBatchBrandConversion(
+        context: Context,
+        targetBrand: LivePhotoBrandMode,
+        saveToLibrary: Boolean
+    ) {
+        val queue = _brandConvertQueue.value
+        if (queue.isEmpty() || _isBrandConverting.value) return
+        _isBrandConverting.value = true
+        _brandConvertResult.value = null
+
+        brandConvertJob = viewModelScope.launch {
+            var successCount = 0
+            val total = queue.size
+            val liveDir = File(context.filesDir, "live_photos").apply { mkdirs() }
+            val previewCacheDir = File(context.cacheDir, "brand_preview").apply { mkdirs() }
+
+            try {
+                for (index in queue.indices) {
+                    val item = _brandConvertQueue.value.getOrNull(index) ?: continue
+                    _brandConvertQueue.value = _brandConvertQueue.value.mapIndexed { i, it ->
+                        if (i == index) it.copy(status = 1) else it
+                    }
+                    _exportProgressState.value = com.example.ui.components.ExportProgressUiState(
+                        title = context.getString(com.example.R.string.brand_convert_title),
+                        stepDescription = context.getString(com.example.R.string.batch_progress_status, index + 1, total, item.title),
+                        progressFraction = ((index.toFloat() + 0.4f) / total.toFloat()).coerceIn(0.05f, 0.98f)
+                    )
+
+                    val convertedPair: Pair<File, File>? = withContext(Dispatchers.IO) {
+                        val timestamp = System.currentTimeMillis() + index
+                        val tempSrc = File(context.cacheDir, "brand_src_${timestamp}.tmp")
+                        val tempCleanCover = File(context.cacheDir, "brand_cov_${timestamp}.jpg")
+                        try {
+                            val outDir = if (saveToLibrary) liveDir else previewCacheDir
+                            val outCoverFile = File(outDir, "${timestamp}_cover.jpg")
+                            val outVideoFile = File(outDir, "${timestamp}_video.mp4")
+                            val outMotionFile = File(outDir, "${timestamp}_motion.jpg")
+
+                            val srcFile: File = if (item.uri.scheme == "file" && item.uri.path != null) {
+                                File(item.uri.path!!)
+                            } else {
+                                val resolved = MediaPermissionHelper.resolveOriginalUri(context, item.uri)
+                                context.contentResolver.openInputStream(resolved)?.use { input ->
+                                    tempSrc.outputStream().buffered(64 * 1024).use { output ->
+                                        input.copyTo(output, 64 * 1024)
+                                    }
+                                }
+                                tempSrc
+                            }
+
+                            if (!srcFile.exists() || srcFile.length() < 64L) {
+                                return@withContext null
+                            }
+
+                            var videoReady = com.example.core.media.ImageProcessor.extractVideoFromMotionPhoto(srcFile, outVideoFile)
+                            if (!videoReady && !item.videoFallbackPath.isNullOrBlank()) {
+                                val fallbackVid = File(item.videoFallbackPath)
+                                if (fallbackVid.exists() && fallbackVid.length() > 256L) {
+                                    fallbackVid.copyTo(outVideoFile, overwrite = true)
+                                    videoReady = true
+                                }
+                            }
+                            if (!videoReady || !outVideoFile.exists() || outVideoFile.length() <= 256L) {
+                                return@withContext null
+                            }
+
+                            val cleanOk = com.example.core.protocol.LivePhotoDetector.extractCleanCoverJpeg(
+                                context = context,
+                                sourceFile = srcFile,
+                                targetCoverFile = tempCleanCover
+                            )
+                            if (!cleanOk || !tempCleanCover.exists() || tempCleanCover.length() < 64L) {
+                                return@withContext null
+                            }
+
+                            val fileProbe = com.example.core.protocol.LivePhotoDetector.probeFile(srcFile)
+                            val ptsUs = if (fileProbe.presentationTimestampUs > 0L) {
+                                fileProbe.presentationTimestampUs
+                            } else {
+                                item.probe.presentationTimestampUs
+                            }
+
+                            val packaged = com.example.core.protocol.LivePhotoProtocolPacker.packageLivePhoto(
+                                coverFile = tempCleanCover,
+                                videoFile = outVideoFile,
+                                outputFile = outMotionFile,
+                                presentationTimestampUs = ptsUs,
+                                brandMode = targetBrand
+                            )
+                            if (!packaged || !outMotionFile.exists() || outMotionFile.length() < 64L) {
+                                return@withContext null
+                            }
+
+                            com.example.util.DebugLogManager.inspectAndLogLivePhotoContainer("BrandConvert", outMotionFile)
+
+                            val targetTag = targetBrand.name.lowercase()
+                            val galleryName = "${item.title}_$targetTag.jpg"
+                            val resolver = context.contentResolver
+                            val contentValues = android.content.ContentValues().apply {
+                                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, galleryName)
+                                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_PICTURES + "/LivePhotos")
+                            }
+                            val galleryUri = resolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+                            if (galleryUri != null) {
+                                resolver.openOutputStream(galleryUri)?.use { outStream ->
+                                    outMotionFile.inputStream().use { input -> input.copyTo(outStream) }
+                                }
+                            }
+
+                            if (saveToLibrary) {
+                                tempCleanCover.copyTo(outCoverFile, overwrite = true)
+                                val record = LivePhotoRecord(
+                                    title = "${item.title} (${targetBrand.name})",
+                                    coverPath = outMotionFile.absolutePath,
+                                    videoPath = outVideoFile.absolutePath,
+                                    timestamp = timestamp,
+                                    isEmbedded = true
+                                )
+                                livePhotoDao.insertLivePhoto(record)
+                            }
+                            Pair(outMotionFile, outVideoFile)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Brand conversion failed for ${item.title}", e)
+                            null
+                        } finally {
+                            tempSrc.delete()
+                            tempCleanCover.delete()
+                        }
+                    }
+
+                    if (convertedPair != null) successCount++
+                    _brandConvertQueue.value = _brandConvertQueue.value.mapIndexed { i, it ->
+                        if (i == index) {
+                            it.copy(
+                                status = if (convertedPair != null) 2 else 3,
+                                outputCoverPath = convertedPair?.first?.absolutePath,
+                                outputVideoPath = convertedPair?.second?.absolutePath
+                            )
+                        } else it
+                    }
+                }
+
+                val summary = context.getString(com.example.R.string.batch_finished_summary, successCount, total)
+                _brandConvertResult.value = summary
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, summary, Toast.LENGTH_SHORT).show()
+                }
+            } catch (_: kotlinx.coroutines.CancellationException) {
+            } finally {
+                _exportProgressState.value = null
+                _isBrandConverting.value = false
+                brandConvertJob = null
+                refreshCacheStats(context)
             }
         }
     }

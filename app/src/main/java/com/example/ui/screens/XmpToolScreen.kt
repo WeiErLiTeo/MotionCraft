@@ -20,7 +20,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.ImageSearch
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -51,7 +53,11 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.core.media.ImageProcessor
+import com.example.ui.components.InAppMediaPickerDialog
+import com.example.ui.components.MediaPickerType
+import com.example.util.MediaPermissionHelper
 import com.example.viewmodel.LivePhotoViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -61,11 +67,13 @@ fun XmpToolScreen(viewModel: LivePhotoViewModel, onBack: () -> Unit = {}) {
         onBack()
     }
     val context = LocalContext.current
+    val useBuiltInPicker by viewModel.useBuiltInFilePicker.collectAsStateWithLifecycle()
     var xmpContent by remember { mutableStateOf("") }
     var exifContent by remember { mutableStateOf("") }
     var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
     var resultMessage by remember { mutableStateOf("") }
     var activeTab by remember { mutableIntStateOf(0) }
+    var showInAppPicker by remember { mutableStateOf(false) }
 
     val defaultTemplate = """<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
 <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 5.1.0-jc003">
@@ -98,10 +106,9 @@ fun XmpToolScreen(viewModel: LivePhotoViewModel, onBack: () -> Unit = {}) {
 </x:xmpmeta>
 <?xpacket end="w"?>"""
 
-    val imagePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri ->
-        if (uri != null) {
+    val loadSelectedUri: (Uri?) -> Unit = { rawUri ->
+        if (rawUri != null) {
+            val uri = MediaPermissionHelper.resolveOriginalUri(context, rawUri)
             selectedImageUri = uri
             resultMessage = ""
             try {
@@ -117,6 +124,29 @@ fun XmpToolScreen(viewModel: LivePhotoViewModel, onBack: () -> Unit = {}) {
                 resultMessage = "Error: ${e.message ?: ""}"
             }
         }
+    }
+
+    val imagePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri -> loadSelectedUri(uri) }
+
+    val documentPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri -> loadSelectedUri(uri) }
+
+    if (showInAppPicker) {
+        InAppMediaPickerDialog(
+            pickerType = MediaPickerType.IMAGE_ONLY,
+            allowMultiSelect = false,
+            onDismiss = { showInAppPicker = false },
+            onConfirm = { uris ->
+                showInAppPicker = false
+                loadSelectedUri(uris.firstOrNull())
+            },
+            onFallbackToSystemFiles = {
+                documentPicker.launch(arrayOf("image/*"))
+            }
+        )
     }
 
     Scaffold(
@@ -150,14 +180,30 @@ fun XmpToolScreen(viewModel: LivePhotoViewModel, onBack: () -> Unit = {}) {
 
             Button(
                 onClick = {
-                    imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    if (useBuiltInPicker) {
+                        showInAppPicker = true
+                    } else {
+                        imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    }
                 },
                 shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth(0.85f)
+                modifier = Modifier.fillMaxWidth(0.9f)
             ) {
                 Icon(Icons.Default.ImageSearch, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(androidx.compose.ui.res.stringResource(com.example.R.string.btn_open_xmp_tool))
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            OutlinedButton(
+                onClick = { documentPicker.launch(arrayOf("image/*")) },
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth(0.9f)
+            ) {
+                Icon(Icons.Default.FolderOpen, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(androidx.compose.ui.res.stringResource(com.example.R.string.btn_pick_from_file_preserve))
             }
 
             Spacer(modifier = Modifier.height(16.dp))

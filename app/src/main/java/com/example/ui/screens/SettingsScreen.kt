@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Palette
@@ -48,6 +49,10 @@ import androidx.compose.material.icons.filled.Sell
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.util.MediaPermissionHelper
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -100,19 +105,37 @@ private fun restartApp(context: Context) {
 fun SettingsScreen(
     viewModel: LivePhotoViewModel,
     onOpenXmpTool: () -> Unit = {},
-    onOpenAppleHub: () -> Unit = {}
+    onOpenAppleHub: () -> Unit = {},
+    onOpenOnboarding: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val dynamicColor by viewModel.dynamicColor.collectAsStateWithLifecycle()
     val themeColor by viewModel.themeColor.collectAsStateWithLifecycle()
     val language by viewModel.language.collectAsStateWithLifecycle()
     val autoPlay by viewModel.autoPlayLivePhoto.collectAsStateWithLifecycle()
+    val useBuiltInPicker by viewModel.useBuiltInFilePicker.collectAsStateWithLifecycle()
     val cacheStats by viewModel.cacheStats.collectAsStateWithLifecycle()
     var showDebugSheet by remember { mutableStateOf(false) }
+    var permTick by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     val isDebugMode by DebugLogManager.isDebugMode.collectAsStateWithLifecycle()
     val isFloatingVisible by DebugLogManager.isFloatingWindowVisible.collectAsStateWithLifecycle()
     val logs by DebugLogManager.logs.collectAsStateWithLifecycle()
+
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                permTick++
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    val hasFullMedia = remember(permTick) { MediaPermissionHelper.hasFullMediaAccess(context) }
+    val hasAnyMedia = remember(permTick) { MediaPermissionHelper.hasAnyMediaAccess(context) }
+    val hasLocation = remember(permTick) { MediaPermissionHelper.hasMediaLocationAccess(context) }
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
         viewModel.refreshCacheStats(context)
@@ -276,6 +299,101 @@ fun SettingsScreen(
                                 )
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Card(
+            modifier = Modifier.animateContentSize().fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        stringResource(R.string.picker_settings_title),
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    stringResource(R.string.picker_settings_desc),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(14.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                        Text(
+                            stringResource(R.string.use_built_in_picker_title),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            stringResource(R.string.use_built_in_picker_desc),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = useBuiltInPicker,
+                        onCheckedChange = {
+                            DebugLogManager.interaction("SettingsScreen", "Toggle UseBuiltInFilePicker: $it")
+                            viewModel.setUseBuiltInFilePicker(it)
+                        },
+                        colors = switchColors
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                val permSummary = when {
+                    hasFullMedia && hasLocation -> stringResource(R.string.permission_status_full)
+                    hasAnyMedia -> stringResource(R.string.permission_status_partial)
+                    else -> stringResource(R.string.permission_status_denied)
+                }
+                androidx.compose.material3.Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = permSummary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilledTonalButton(
+                        onClick = onOpenOnboarding,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text(stringResource(R.string.btn_open_onboarding_wizard), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                    OutlinedButton(
+                        onClick = { MediaPermissionHelper.openAppPermissionSettings(context) },
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text(stringResource(R.string.btn_open_app_settings), fontSize = 12.sp)
                     }
                 }
             }
